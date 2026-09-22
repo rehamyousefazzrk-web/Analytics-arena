@@ -11,7 +11,7 @@ const HOST_PIN = String(process.env.HOST_PIN || "1234");
 const GRACE_MS = 1500;
 
 function defState() {
-  return { v: 0, stage: { type: "lobby" }, teams: C.TEAMS.map(t => ({ ...t })), revealed: {}, boxAssign: {} };
+  return { v: 0, stage: { type: "lobby" }, teams: C.TEAMS.slice(0, C.DEFAULT_TEAMS).map(t => ({ ...t })), revealed: {}, boxAssign: {} };
 }
 function toObj(x) {
   if (!x) return {};
@@ -217,7 +217,15 @@ module.exports = async function handler(req, res) {
       } else if (op === "timer") { const base = b.add && st.stage.endsAt && st.stage.endsAt > now ? st.stage.endsAt : now; st.stage.endsAt = b.dur ? base + b.dur * 1000 : null; if (!b.add || !st.stage.startsAt) st.stage.startsAt = now; await saveState(st); }
       else if (op === "mic") { st.stage.mic = b.pid || null; await saveState(st); }
       else if (op === "teams") { (b.teams || []).forEach(t => { const x = st.teams.find(y => y.id === t.id); if (x) x.name = clean(t.name, 24) || x.name; }); await saveState(st); }
-      else if (op === "boxDraw") { const ids = shuffle(C.BOXES.map(x => x.id)); st.boxAssign = {}; st.teams.forEach((t, i) => st.boxAssign[t.id] = ids[i % ids.length]); await saveState(st); }
+      else if (op === "teamCount") {
+        const n = Math.max(2, Math.min(C.TEAMS.length, Number(b.n) || C.DEFAULT_TEAMS));
+        const old = st.teams; st.teams = C.TEAMS.slice(0, n).map(t => old.find(o => o.id === t.id) || { ...t });
+        const ids = st.teams.map(t => t.id); let i = 0; const moves = [];
+        for (const [pid, p] of Object.entries(d.players)) if (!ids.includes(p.team)) { p.team = ids[i++ % n]; moves.push(pid, JSON.stringify(p)); }
+        if (moves.length) await store.cmd("HSET", K.players, ...moves);
+        st.boxAssign = {}; await saveState(st);
+      }
+      else if (op === "boxDraw") { const ids = shuffle(C.BOXES.map(x => x.id)); st.boxAssign = {}; st.teams.forEach((t, i) => { if (i && i % ids.length === 0) ids.push(...shuffle(ids.splice(0))); st.boxAssign[t.id] = ids[i % ids.length]; }); await saveState(st); }
       else if (op === "score") { const pairs = Object.entries(b.scores || {}).flatMap(([k, v]) => [k, Number(v) || 0]); if (pairs.length) await store.cmd("HSET", K.score, ...pairs); cache = null; }
       else if (op === "move") { const p = d.players[b.pid]; if (p && st.teams.find(t => t.id === b.team)) { p.team = b.team; await store.cmd("HSET", K.players, b.pid, JSON.stringify(p)); cache = null; } }
       else if (op === "kick") { await store.cmd("HDEL", K.players, b.pid); cache = null; }
