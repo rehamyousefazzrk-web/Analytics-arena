@@ -323,7 +323,7 @@ function screenHTML() {
     const owner = bid => Object.keys(c.assign).find(k => c.assign[k] === bid);
     h = `<div class="row"><div class="eyebrow">Mystery box · one sealed case per team</div><div class="spacer"></div>${ph === "answer" ? ring(s) : ""}</div>`;
     if (!drawn) h += `<div class="boxes">${["A", "B", "C", "D"].map(() => `<div class="box sealed"><div class="q">?</div></div>`).join("")}</div>`;
-    else h += `<div class="boxes">${c.boxes.filter(b => owner(b.id)).map(b => { const tid = owner(b.id); const pk = rev && c.picks && c.picks[tid]; const ex = rev && c.expected[b.id];
+    else h += `<div class="boxes">${V.teams.filter(tm => c.assign[tm.id]).map(tm => { const tid = tm.id; const b = c.boxes.find(x => x.id === c.assign[tid]); const pk = rev && c.picks && c.picks[tid]; const ex = rev && c.expected[b.id];
       const mark = (val, list) => !val ? `<span class="muted">—</span>` : `${esc(val)} ${list.length === 0 ? "" : list.includes(val) ? '<span class="ok">✓</span>' : '<span class="no">✗</span>'}`;
       return `<div class="box tcol" data-t="${tid}"><div class="row" style="justify-content:space-between"><span class="letter">${b.id}</span><span class="own">${tname(tid)}${ph === "answer" && c.submitted.includes(tid) ? " ✓" : ""}</span></div>
         <div class="eyebrow">${esc(b.level)} · ${esc(b.format)}</div><div>${esc(b.content)}</div><div class="obj">${esc(b.objective)}</div>
@@ -349,7 +349,7 @@ function screenHTML() {
       const lbl = ph === "note" ? ["① Individual note", "Silent. On your own phone. 2 minutes."] : ph === "team" ? ["② Team answer", "One answer sheet per team. Answer 1–4 first."] : ["Boss fight", "Read the case. Where does the journey break?"];
       right = `<div style="display:grid;gap:1em;align-content:start"><div class="phasebig">${ring(s, true)}<div><div class="disp sh2">${lbl[0]}</div><p class="muted" style="margin:.3em 0 0;font-size:1.2em">${lbl[1]}</p></div></div>
         ${ph === "note" ? `<div class="voted mono">${c.notes}/${V.players.length} <span class="eyebrow">notes in</span></div>` : ""}
-        ${ph === "team" ? `<div class="teams" style="grid-template-columns:1fr 1fr">${V.teams.map(tm => { const ok = c.submitted.includes(tm.id); return `<div class="team tcol" data-t="${tm.id}" style="min-height:0"><h3 class="disp">${esc(tm.name)}</h3><div class="st ${ok ? "ok" : ""}">${ok ? "✓ Sheet in" : "⚔️ Fighting…"}</div></div>`; }).join("")}</div>` : ""}
+        ${ph === "team" ? `<div class="teams" style="grid-template-columns:repeat(auto-fit,minmax(10em,1fr))">${V.teams.map(tm => { const ok = c.submitted.includes(tm.id); return `<div class="team tcol" data-t="${tm.id}" style="min-height:0"><h3 class="disp">${esc(tm.name)}</h3><div class="st ${ok ? "ok" : ""}">${ok ? "✓ Sheet in" : "⚔️ Fighting…"}</div></div>`; }).join("")}</div>` : ""}
         <div class="qcard"><div class="eyebrow">The 7 questions</div><ol style="margin:.4em 0 0;padding-left:1.3em;font-size:1.1em">${c.qs.map(q => `<li>${esc(q.q)}</li>`).join("")}</ol></div></div>`;
     }
     const hit = prevHP != null && c.hp < prevHP; prevHP = c.hp;
@@ -421,6 +421,7 @@ function dockHTML() {
   let b = "";
   if (s.type === "lobby") {
     b = `<div class="ctx"><span class="info">Players join at <b>${esc(location.origin)}</b> · ${V.players.length} joined</span></div>
+      <div class="ctx"><b>Number of teams</b>${[4,5,6,7,8,9,10].map(n => `<button class="btn sm ${V.teams.length === n ? "amber" : ""}" data-act="teamCount" data-n="${n}">${n}</button>`).join("")}<span class="info">${V.players.length} players → about ${Math.ceil(V.players.length / V.teams.length) || 0} per team</span></div>
       <div class="ctx">${V.teams.map((t, i) => `<input class="hinput" id="tn-${t.id}" value="${esc(t.name)}" aria-label="Team ${i + 1} name" style="width:130px">`).join("")}<button class="btn sm" data-act="saveTeams">Save team names</button>
       <div class="spacer"></div><button class="btn sm ghost" data-act="resetScores">Reset scores</button><button class="btn sm ghost" data-act="resetAll">Reset everything</button></div>
       <div style="overflow-x:auto"><table class="htable"><tbody>${V.players.map(p => `<tr><td>${esc(p.emoji)} ${esc(p.name)}</td><td>${V.teams.map(t => `<button class="btn sm ${p.team === t.id ? "amber" : "ghost"}" data-act="move" data-p="${p.id}" data-t="${t.id}">${esc(t.name)}</button>`).join(" ")}</td><td><button class="btn sm ghost" data-act="kick" data-p="${p.id}">Remove</button></td></tr>`).join("")}</tbody></table></div>
@@ -511,6 +512,7 @@ async function hostAct(a, d) {
     case "closeModal": { const m = $("#scoresModal"); m && m.remove(); return; }
     case "csv": return csv();
     case "score": { await host("score", { scores: { [d.f]: +d.v } }); if ($("#scoresModal")) scoresModal(); return; }
+    case "teamCount": if (+d.n !== V.teams.length && (!V.players.length || confirm("Change to " + d.n + " teams? Players on removed teams get moved to the remaining ones."))) return host("teamCount", { n: +d.n }); return;
     case "saveTeams": return host("teams", { teams: V.teams.map(t => ({ id: t.id, name: ($("#tn-" + t.id) || {}).value })) });
     case "move": return host("move", { pid: d.p, team: d.t });
     case "kick": if (confirm("Remove this player?")) return host("kick", { pid: d.p }); return;

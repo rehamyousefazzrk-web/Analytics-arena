@@ -45,6 +45,7 @@ button:focus-visible,input:focus-visible,textarea:focus-visible{outline:3px soli
 .chip.trap[aria-pressed="true"]{background:var(--amber);border-color:var(--amber)}
 .tcol{--c:var(--t1)}
 .tcol[data-t="T2"]{--c:var(--t2)} .tcol[data-t="T3"]{--c:var(--t3)} .tcol[data-t="T4"]{--c:var(--t4)}
+.tcol[data-t="T5"]{--c:#FF8FD1} .tcol[data-t="T6"]{--c:#FF9F43} .tcol[data-t="T7"]{--c:#C7F464} .tcol[data-t="T8"]{--c:#4DE3E3} .tcol[data-t="T9"]{--c:#F8F1A0} .tcol[data-t="T10"]{--c:#E0E6F0}
 
 /* ================= PLAYER (phone) ================= */
 .phone{max-width:520px;margin:0 auto;padding-inline:16px;padding-block:18px 40px;min-height:100vh;display:flex;flex-direction:column;gap:16px}
@@ -145,7 +146,7 @@ textarea.input{min-height:110px;resize:vertical;font-size:17px;unicode-bidi:plai
 .qr{background:#fff;padding:1em;border-radius:1em;width:14em;height:14em;display:grid;place-items:center}
 .qr img,.qr canvas{width:100%!important;height:100%!important}
 .url{font-family:var(--mono);font-weight:700;font-size:2.4em;color:var(--sky);word-break:break-all}
-.teams{display:grid;grid-template-columns:repeat(4,1fr);gap:1.2vw}
+.teams{display:grid;grid-template-columns:repeat(auto-fit,minmax(13em,1fr));gap:1.2vw}
 .team{border:.18em solid var(--c);border-radius:1em;padding:1em;background:var(--card);box-shadow:0 .3em 0 #000;min-height:8em}
 .team h3{margin:0 0 .6em;color:var(--c);font-size:1.6em}
 .team .pl{display:flex;flex-wrap:wrap;gap:.4em}
@@ -168,14 +169,14 @@ textarea.input{min-height:110px;resize:vertical;font-size:17px;unicode-bidi:plai
 .takeaway span{color:var(--sky)}
 .pattern{font-family:var(--display);font-stretch:78%;font-weight:900;font-size:6em;line-height:.95;text-transform:uppercase}
 .human{font-family:var(--ar);font-size:3em;font-weight:600;line-height:1.4;margin:0;direction:rtl}
-.answers{display:grid;grid-template-columns:repeat(2,1fr);gap:1.2vw}
+.answers{display:grid;grid-template-columns:repeat(auto-fit,minmax(18em,1fr));gap:1.2vw}
 .ans{border:.18em solid var(--c);border-radius:1em;padding:1em 1.2em;background:var(--card);animation:pop .4s both}
 .ans h4{margin:0 0 .3em;color:var(--c);font-size:1em;font-family:var(--mono);letter-spacing:.1em;text-transform:uppercase}
 .ans p{margin:0;font-size:1.5em;font-weight:600;unicode-bidi:plaintext}
 .kv{display:grid;grid-template-columns:repeat(3,1fr);gap:1.2vw}
 .kv > div{background:var(--card);border-radius:1em;padding:1em 1.2em;border:2px solid var(--line)}
 .kv p{margin:.3em 0 0;font-size:1.2em}
-.boxes{display:grid;grid-template-columns:repeat(4,1fr);gap:1.2vw;flex:1}
+.boxes{display:grid;grid-template-columns:repeat(auto-fit,minmax(14em,1fr));gap:1.2vw;flex:1}
 .box{border:.18em solid var(--c);border-radius:1.1em;background:var(--card);padding:1.1em;display:flex;flex-direction:column;gap:.6em;box-shadow:0 .35em 0 #000;animation:flip .6s both}
 .box.sealed{border-color:var(--line2);background:repeating-linear-gradient(135deg,var(--card2) 0 1em,var(--card) 1em 2em);align-items:center;justify-content:center}
 .box.sealed .q{font-family:var(--display);font-weight:900;font-size:7em;color:var(--sky);line-height:1;animation:bob 1.6s ease-in-out infinite}
@@ -206,7 +207,7 @@ textarea.input{min-height:110px;resize:vertical;font-size:17px;unicode-bidi:plai
 .qcard{background:var(--card);border:.18em solid var(--line2);border-radius:1em;padding:1.2em}
 .qcard .qq{font-family:var(--display);font-stretch:82%;font-weight:800;font-size:2.4em;line-height:1.05}
 .keyline{margin-top:.8em;background:rgba(31,203,106,.12);border:2px solid var(--green);border-radius:.8em;padding:.8em 1em;font-size:1.3em;animation:pop .4s both}
-.teamans{display:grid;grid-template-columns:1fr 1fr;gap:.8em;margin-top:.8em}
+.teamans{display:grid;grid-template-columns:repeat(auto-fit,minmax(12em,1fr));gap:.8em;margin-top:.8em}
 .teamans > div{border-left:.3em solid var(--c);background:var(--card2);border-radius:.5em;padding:.6em .8em}
 .teamans b{color:var(--c);font-size:.85em;font-family:var(--mono);text-transform:uppercase;letter-spacing:.08em}
 .teamans p{margin:.2em 0 0;unicode-bidi:plaintext}
