@@ -416,7 +416,7 @@ function curSection() { const s = V.stage; return s.type === "rg" ? "rg:" + s.ro
 function dockHTML() {
   const s = V.stage, c = V.cur, H = V.host, sc = H.score;
   const nav = `<div class="dock-top"><span class="lbl">Trainer</span><div class="nav">${SECTIONS.map(([k, l]) => `<button class="${curSection() === k ? "on" : ""}" data-act="go" data-k="${k}">${l}</button>`).join("")}</div><div class="spacer"></div>
-    <button class="btn sm" data-act="timerAdd">+30s</button><button class="btn sm" data-act="timerStop">Stop timer</button><button class="btn sm" data-act="scores">🔒 Private scores</button>
+    <button class="btn sm" data-act="timerAdd">+30s</button><button class="btn sm" data-act="timerStop">Stop timer</button><button class="btn sm" data-act="scores">🔒 Private scores</button><button class="btn sm" data-act="edOpen">✏️ Questions</button>
     <button class="btn sm ${soundOn ? "amber" : ""}" data-act="sound">${soundOn ? "🔊" : "🔇"}</button><button class="btn sm" data-act="min" title="P">${dockMin ? "▲ Show" : "▼ Hide"} <span class="kbd">P</span></button></div>`;
   let b = "";
   if (s.type === "lobby") {
@@ -489,6 +489,61 @@ function csv() {
   V.teams.forEach(t => { const x = H.teamTotals[t.id]; out += [q(t.name), x.say, x.box, x.boss, x.total].join(",") + "\n"; });
   const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob(["﻿" + out], { type: "text/csv" })); a.download = "analytics-arena-scores.csv"; document.body.appendChild(a); a.click(); a.remove();
 }
+/* ---------------- question editor ---------------- */
+let ED = null, edRound = "1", edOrig = "";
+function edOpen() { ED = JSON.parse(JSON.stringify(V.host.quiz)); edOrig = JSON.stringify(ED); edRound = V.stage.type === "rg" && V.host.rounds[V.stage.round] ? V.stage.round : "1"; renderEditor(); }
+function renderEditor() {
+  const R = V.host.rounds;
+  const items = ED.map((q, i) => ({ q, i })).filter(x => x.q.r === edRound);
+  const card = ({ q, i }, n) => `<div class="qed">
+    <div class="row"><b class="mono">#${n + 1}</b>
+      <span class="seg"><button class="${q.type !== "mcq" ? "on" : ""}" data-act="edType" data-i="${i}" data-v="rg">🚩✅ Red/Green</button><button class="${q.type === "mcq" ? "on" : ""}" data-act="edType" data-i="${i}" data-v="mcq">ABCD Choices</button></span>
+      <span class="muted small">Points</span><span class="seg">${[1, 2, 3, 4, 5].map(p => `<button class="${(q.pts || 1) === p ? "on" : ""}" data-act="edPts" data-i="${i}" data-v="${p}">${p}</button>`).join("")}</span>
+      <span class="spacer"></span>
+      <button class="btn sm ghost" data-act="edMove" data-i="${i}" data-v="-1" ${n === 0 ? "disabled" : ""} title="Move up">↑</button>
+      <button class="btn sm ghost" data-act="edMove" data-i="${i}" data-v="1" ${n === items.length - 1 ? "disabled" : ""} title="Move down">↓</button>
+      <button class="btn sm ghost" data-act="edDel" data-i="${i}" title="Delete">🗑</button></div>
+    <label class="eyebrow">Statement / question</label>
+    <textarea class="hinput" rows="2" data-ef="t" data-i="${i}" dir="auto">${esc(q.t)}</textarea>
+    ${q.type === "mcq"
+      ? `<label class="eyebrow">Options — tap the circle to mark the correct one</label>${[0, 1, 2, 3].map(k => { const L = "ABCD"[k]; return `<div class="row" style="flex-wrap:nowrap"><button class="radio ${q.a === L ? "on" : ""}" data-act="edAns" data-i="${i}" data-v="${L}" title="Correct answer">${q.a === L ? "✓" : L}</button><input class="hinput" style="flex:1" data-ef="opt" data-o="${k}" data-i="${i}" value="${esc((q.opts || [])[k] || "")}" placeholder="Option ${L}${k > 1 ? " (optional)" : ""}" dir="auto"></div>`; }).join("")}`
+      : `<label class="eyebrow">Correct answer</label><div class="row"><button class="btn sm ${q.a === "R" ? "red-on" : "ghost"}" data-act="edAns" data-i="${i}" data-v="R">🚩 Red flag</button><button class="btn sm ${q.a === "G" ? "green-on" : "ghost"}" data-act="edAns" data-i="${i}" data-v="G">✅ Green flag</button></div>`}
+    <label class="eyebrow">Why — shown after reveal</label>
+    <textarea class="hinput" rows="2" data-ef="e" data-i="${i}" dir="auto">${esc(q.e || "")}</textarea>
+    <label class="eyebrow">Discussion prompt (optional)</label>
+    <input class="hinput" data-ef="d" data-i="${i}" value="${esc(q.d || "")}" dir="auto">
+  </div>`;
+  let m = $("#qEditor"); const scroll = m ? m.scrollTop : 0;
+  if (!m) { m = document.createElement("div"); m.className = "modal"; m.id = "qEditor"; document.body.appendChild(m); }
+  m.innerHTML = `<div class="in"><div class="row"><h2 class="disp sh2" style="margin:0;font-size:32px">✏️ Edit questions</h2>${V.host.customQuiz ? `<span class="chip" style="font-size:12px">edited version live</span>` : `<span class="chip" style="font-size:12px">original questions</span>`}<div class="spacer"></div>
+      <button class="btn sm ghost" data-act="edReset">Reset to original</button><button class="btn sm" data-act="edClose">Close</button><button class="btn sm red" data-act="edSave">💾 Save changes</button></div>
+    <p class="muted small" style="margin:8px 0 12px">Changes go live for everyone as soon as you save — no GitHub needed. Editing a question that was already answered keeps the votes.</p>
+    <div class="nav">${Object.entries(R).map(([k, r]) => `<button class="${edRound === k ? "on" : ""}" data-act="edRound" data-r="${k}">${esc(r.name)} <span class="mono" style="opacity:.6">${ED.filter(q => q.r === k).length}</span></button>`).join("")}</div>
+    <div class="muted small" style="margin-top:8px">${esc(R[edRound].rule)} · ${esc(R[edRound].level)}</div>
+    ${items.map(card).join("") || `<p class="muted">No questions in this round yet.</p>`}
+    <div class="row" style="margin-top:12px"><button class="btn sm" data-act="edAdd" data-v="rg">+ Add Red/Green statement</button><button class="btn sm" data-act="edAdd" data-v="mcq">+ Add multiple choice</button><div class="spacer"></div><button class="btn sm red" data-act="edSave">💾 Save changes</button></div></div>`;
+  m.scrollTop = scroll;
+}
+document.addEventListener("input", e => {
+  const el = e.target; if (!ED || !el.dataset.ef) return; const q = ED[+el.dataset.i]; if (!q) return;
+  if (el.dataset.ef === "opt") { q.opts = q.opts || ["", "", "", ""]; while (q.opts.length < 4) q.opts.push(""); q.opts[+el.dataset.o] = el.value; }
+  else q[el.dataset.ef] = el.value;
+});
+function edAct(a, d) {
+  const i = +d.i, q = ED && ED[i];
+  if (a === "edRound") edRound = d.r;
+  else if (a === "edType") { q.type = d.v; if (d.v === "mcq") { q.opts = q.opts && q.opts.length ? q.opts : ["", "", "", ""]; if (!"ABCD".includes(q.a)) q.a = "A"; } else { q.a = q.a === "G" ? "G" : "R"; } }
+  else if (a === "edPts") q.pts = +d.v;
+  else if (a === "edAns") q.a = d.v;
+  else if (a === "edDel") { if (!confirm("Delete this question?")) return; ED.splice(i, 1); }
+  else if (a === "edMove") { const same = ED.map((x, j) => x.r === edRound ? j : -1).filter(j => j >= 0); const pos = same.indexOf(i), to = same[pos + (+d.v)]; if (to == null) return; [ED[i], ED[to]] = [ED[to], ED[i]]; }
+  else if (a === "edAdd") {
+    const same = ED.map((x, j) => x.r === edRound ? j : -1).filter(j => j >= 0); const at = same.length ? same[same.length - 1] + 1 : ED.length;
+    ED.splice(at, 0, d.v === "mcq" ? { id: "", r: edRound, type: "mcq", a: "A", pts: 2, t: "", opts: ["", "", "", ""], e: "", d: "" } : { id: "", r: edRound, type: "rg", a: "R", pts: 1, t: "", e: "", d: "" });
+  }
+  renderEditor();
+  if (a === "edAdd") { const m = $("#qEditor"); const tas = m.querySelectorAll('textarea[data-ef="t"]'); const last = tas[tas.length - 1]; if (last) { last.scrollIntoView({ block: "center" }); last.focus(); } }
+}
 function goSection(k) {
   if (k === "lobby") return host("stage", { stage: { type: "lobby" } });
   if (k.startsWith("rg:")) return host("stage", { stage: { type: "rg", round: k.slice(3), idx: 0, phase: "vote" }, dur: "auto" });
@@ -502,6 +557,11 @@ async function hostAct(a, d) {
   switch (a) {
     case "pin": pin = $("#f-pin").value.trim(); ls.set("mc-pin", pin); $("#app").innerHTML = ""; lastSig = ""; lastDockSig = ""; return refresh();
     case "go": return goSection(d.k);
+    case "edOpen": return edOpen();
+    case "edClose": if (JSON.stringify(ED) !== edOrig && !confirm("Close without saving your changes?")) return; ED = null; { const m = $("#qEditor"); m && m.remove(); } return;
+    case "edSave": { const ok = await host("quizSave", { quiz: ED }); if (ok) { toast("Saved ✓ — live for everyone"); ED = JSON.parse(JSON.stringify(V.host.quiz)); edOrig = JSON.stringify(ED); renderEditor(); } return; }
+    case "edReset": if (!confirm("Go back to the original questions from the session file? Your edits will be removed.")) return; await host("quizReset"); ED = JSON.parse(JSON.stringify(V.host.quiz)); edOrig = JSON.stringify(ED); renderEditor(); toast("Original questions restored"); return;
+    case "edRound": case "edType": case "edPts": case "edAns": case "edDel": case "edMove": case "edAdd": return edAct(a, d);
     case "nextSection": { const i = SECTIONS.findIndex(x => x[0] === curSection()); return goSection(SECTIONS[Math.min(SECTIONS.length - 1, i + 1)][0]); }
     case "min": dockMin = !dockMin; ls.set("mc-dockmin", dockMin); lastDockSig = ""; return render();
     case "sound": soundOn = !soundOn; sfx("join"); lastDockSig = ""; return render();
@@ -562,13 +622,14 @@ document.addEventListener("keydown", e => {
   if (e.key === "Enter" && e.target.id === "f-pin") return hostAct("pin", {});
   if (e.key === "Enter" && e.target.id === "f-name") return playerAct("join", {});
   if (ROLE !== "host" || typing() || !V) return;
+  if ($("#qEditor") && e.key !== "Escape") return;
   const s = V.stage;
   if (e.key === "p" || e.key === "P") hostAct("min", {});
   if (s.type === "rg" && s.phase !== "summary") {
     if ((e.key === "r" || e.key === "R") && s.phase === "vote") hostAct("rgReveal", {});
     if (e.key === "ArrowRight") { if (s.phase === "vote") hostAct("rgReveal", {}); else if ((s.idx || 0) < V.host.roundLens[s.round] - 1) hostAct("rgGo", { i: (s.idx || 0) + 1 }); else hostAct("rgSummary", {}); }
   }
-  if (e.key === "Escape") hostAct("closeModal", {});
+  if (e.key === "Escape") { if ($("#qEditor")) hostAct("edClose", {}); else hostAct("closeModal", {}); }
 });
 if (ROLE === "host" && !pin) renderPin(false);
 loop();

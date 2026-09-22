@@ -307,3 +307,14 @@ textarea.input{min-height:110px;resize:vertical;font-size:17px;unicode-bidi:plai
 @keyframes shake{20%{transform:translateX(-10px)}40%{transform:translateX(9px)}60%{transform:translateX(-6px)}80%{transform:translateX(4px)}}
 
 @media (max-width:900px){.mascot{display:none}}
+
+/* question editor */
+#qEditor .in{max-width:900px}
+.qed{border:2px solid var(--line2);border-radius:12px;padding:12px 14px;margin-top:12px;background:var(--card);display:grid;gap:6px}
+.qed .hinput{width:100%;font-size:14px;line-height:1.4;resize:vertical}
+.qed .eyebrow{font-size:10px;margin-top:4px}
+.radio{width:32px;height:32px;flex:none;border-radius:50%;border:2px solid var(--line2);background:var(--bg2);font-weight:800;font-size:13px}
+.radio.on{background:var(--green);border-color:var(--green);color:#04130A}
+.btn.red-on{background:var(--red);border-color:var(--red);color:#fff}
+.btn.green-on{background:var(--green);border-color:var(--green);color:#04130A}
+.small{font-size:13px}
