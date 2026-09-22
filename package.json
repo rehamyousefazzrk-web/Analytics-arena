@@ -1,0 +1,8 @@
+{
+  "name": "analytics-arena",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Live Red/Green + team games for the Morning Club analytics session",
+  "engines": { "node": ">=18" },
+  "scripts": { "dev": "node dev-server.js" }
+}
