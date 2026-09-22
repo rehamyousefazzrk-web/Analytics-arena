@@ -22,6 +22,7 @@ async function api(method, body, qs = "") {
   return j;
 }
 async function refresh() {
+  if (ROLE === "host" && !pin) return; // wait until the trainer types the PIN
   if (busy) return; busy = true;
   try {
     const qs = ROLE === "host" ? "?pin=" + encodeURIComponent(pin || "") : ROLE === "player" && pid ? "?pid=" + encodeURIComponent(pid) : "";
@@ -30,7 +31,7 @@ async function refresh() {
     if (ROLE === "player" && pid && j.me === null) { pid = null; ls.set("mc-pid", null); }
     render();
   } catch (e) {
-    if (e.code === "pin") { pin = null; ls.set("mc-pin", null); renderPin(true); }
+    if (e.code === "pin") { pin = null; ls.set("mc-pin", null); if (!$("#f-pin")) renderPin(true); else { const er = $("#pinerr"); if (er) er.hidden = false; } }
     else showError(e.code === "db" ? e.message : "Reconnecting…");
   } finally { busy = false; }
 }
@@ -396,7 +397,7 @@ function renderPin(bad) {
   $("#app").innerHTML = `<div class="pinwrap"><div class="pcard" style="max-width:420px;width:100%"><div class="logo" style="margin-bottom:12px"><img src="/assets/logo.png" alt="" onerror="this.remove()"><i></i><span>Trainer</span></div>
     <h2 class="disp bigtitle">Host PIN</h2><p class="muted">The PIN you set in Vercel (HOST_PIN). Default is 1234.</p>
     <input class="input" id="f-pin" type="password" inputmode="numeric" autocomplete="off" style="margin-top:10px">
-    ${bad ? `<p class="err" style="margin-top:10px">Wrong PIN.</p>` : ""}<button class="btn red cta" style="margin-top:14px" data-act="pin">Enter</button></div></div>`;
+    <p class="err" id="pinerr" style="margin-top:10px" ${bad ? "" : "hidden"}>Wrong PIN — try again.</p><button class="btn red cta" style="margin-top:14px" data-act="pin">Enter</button></div></div>`;
   setTimeout(() => $("#f-pin") && $("#f-pin").focus(), 50);
 }
 function renderHost() {
