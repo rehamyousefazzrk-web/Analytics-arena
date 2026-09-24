@@ -69,6 +69,7 @@ function tickTimers() {
     const left = (end - now()) / 1000, frac = Math.max(0, Math.min(1, (end - now()) / Math.max(1, end - start)));
     const t = el.querySelector("[data-t]"); if (t) t.textContent = left > 0 ? fmt(left) : "0:00";
     el.style.setProperty("--p", frac);
+    el.querySelectorAll(".ring").forEach(r => r.style.setProperty("--p", frac));
     const bar = el.querySelector("i"); if (bar && el.classList.contains("tbar")) bar.style.width = frac * 100 + "%";
     el.classList.toggle("low", left <= 5);
     if (ROLE !== "player" && left <= 5 && left > 0) tickSound(Math.ceil(left));
@@ -127,7 +128,8 @@ function bigTimerHTML(phone) {
   const t = V && V.timer; if (!t) return "";
   const left = (t.endsAt - now()) / 1000; if (left < -20) return "";
   return `<div class="btimer ${phone ? "ph" : ""} ${left <= 0 ? "done" : ""}" data-ends="${t.endsAt}" data-start="${t.startsAt}">
-    <span class="lbl">${esc(t.label || "Timer")}</span><span class="tt mono" data-t>…</span>${left <= 0 ? `<span class="up">TIME'S UP</span>` : ""}</div>`;
+    <div class="ring big"><span data-t>…</span></div>
+    <div class="bt-txt"><span class="lbl">${esc(t.label || "Timer")}</span>${left <= 0 ? `<span class="up">TIME'S UP</span>` : ""}</div></div>`;
 }
 function patHTML(p) { return p.map(([n, d]) => `${esc(n)} <span class="${d === "up" ? "up" : "down"}">${d === "up" ? "↑" : d === "down" ? "↓" : "= 0"}</span>`).join(" + "); }
 
@@ -398,6 +400,12 @@ function drawQR() {
    HOST
    ===================================================================== */
 const SECTIONS = [["lobby", "Lobby"], ["rg:1", "R/G 1"], ["say", "Say it"], ["rg:RATES", "A vs B"], ["rg:2", "R/G 2"], ["rg:PULSE", "PULSE"], ["box", "Mystery box"], ["rg:3", "KPI round"], ["rg:QB", "QUICKBITE"], ["rg:4", "R/G 4"], ["rg:VOLT", "VOLT"], ["boss", "Boss fight"], ["rg:F", "Final flag"], ["board", "Scoreboard"], ["rg:BANK", "Bonus quiz"]];
+const NAV_GROUPS = [
+  ["", [["lobby", "Lobby"]]],
+  ["👤 Individual", [["rg:1", "R/G 1"], ["rg:RATES", "A vs B"], ["rg:2", "R/G 2"], ["rg:PULSE", "PULSE"], ["rg:3", "KPI round"], ["rg:QB", "QUICKBITE"], ["rg:4", "R/G 4"], ["rg:VOLT", "VOLT"], ["rg:F", "Final flag"], ["rg:BANK", "Bonus quiz"]]],
+  ["👥 Group", [["say", "Say it"], ["box", "Mystery box"], ["boss", "Boss fight"]]],
+  ["", [["board", "Scoreboard"]]]
+];
 let dockMin = ls.get("mc-dockmin", false);
 function renderPin(bad) {
   $("#app").innerHTML = `<div class="pinwrap"><div class="pcard" style="max-width:420px;width:100%"><div class="logo" style="margin-bottom:12px"><img src="/assets/logo.png" alt="" onerror="this.remove()"><i></i><span>Trainer</span></div>
@@ -421,7 +429,8 @@ function seg(field, max, val) { let h = `<span class="seg">`; for (let i = 0; i 
 function curSection() { const s = V.stage; return s.type === "rg" ? "rg:" + s.round : s.type; }
 function dockHTML() {
   const s = V.stage, c = V.cur, H = V.host, sc = H.score;
-  const nav = `<div class="dock-top"><span class="lbl">Trainer</span><div class="nav">${SECTIONS.map(([k, l]) => `<button class="${curSection() === k ? "on" : ""}" data-act="go" data-k="${k}">${l}</button>`).join("")}</div><div class="spacer"></div>
+  const navBtns = NAV_GROUPS.map(([g, items]) => `<div class="navg ${g ? "lab" : ""}">${g ? `<span class="gl">${g}</span>` : ""}${items.map(([k, l]) => `<button class="${curSection() === k ? "on" : ""}" data-act="go" data-k="${k}">${l}</button>`).join("")}</div>`).join("");
+  const nav = `<div class="dock-top"><span class="lbl">Trainer</span><div class="nav">${navBtns}</div><div class="spacer"></div>
     <button class="btn sm" data-act="timerAdd">+30s</button><button class="btn sm" data-act="timerStop">Stop timer</button><button class="btn sm" data-act="scores">🔒 Private scores</button><button class="btn sm" data-act="edOpen">✏️ Content</button><button class="btn sm ${V.timer ? "amber" : ""}" data-act="timerOpen">⏱ Big timer</button>
     <button class="btn sm ${soundOn ? "amber" : ""}" data-act="sound">${soundOn ? "🔊" : "🔇"}</button><button class="btn sm" data-act="min" title="P">${dockMin ? "▲ Show" : "▼ Hide"} <span class="kbd">P</span></button></div>`;
   let b = "";
@@ -683,8 +692,8 @@ async function hostAct(a, d) {
     case "edOpen": return edOpen();
     case "timerOpen": return timerModal();
     case "timerClose": { const m = $("#timerModal"); m && m.remove(); return; }
-    case "timerGo": { const mins = d.m === "custom" ? Number(($("#tmCustom") || {}).value) : Number(d.m); if (!mins || mins < 1) return toast("Write how many minutes"); await host("bigTimer", { dur: Math.round(mins * 60), label: ($("#tmLabel") || {}).value || "" }); toast("Timer started"); return; }
-    case "timerStopBig": { await host("bigTimer", { dur: 0 }); toast("Timer stopped"); return; }
+    case "timerGo": { const mins = d.m === "custom" ? Number(($("#tmCustom") || {}).value) : Number(d.m); if (!mins || mins < 1) return toast("Write how many minutes"); await host("bigTimer", { dur: Math.round(mins * 60), label: ($("#tmLabel") || {}).value || "" }); const mm = $("#timerModal"); mm && mm.remove(); toast("Timer started"); return; }
+    case "timerStopBig": { await host("bigTimer", { dur: 0 }); const ms = $("#timerModal"); ms && ms.remove(); toast("Timer stopped"); return; }
     case "edClose": if (JSON.stringify([ED, EDC]) !== edOrig && !confirm("Close without saving your changes?")) return; ED = null; EDC = null; { const m = $("#qEditor"); m && m.remove(); } return;
     case "edSave": {
       const ok = edTab === "ind" ? await host("quizSave", { quiz: ED }) : await host("contentSave", { content: EDC });

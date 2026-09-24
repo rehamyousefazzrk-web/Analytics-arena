@@ -237,7 +237,10 @@ textarea.input{min-height:110px;resize:vertical;font-size:17px;unicode-bidi:plai
 .dock.min .dock-body{display:none}
 .dock-top{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
 .dock-top .lbl{font-family:var(--mono);color:var(--sky);font-size:11px;letter-spacing:.12em;text-transform:uppercase;margin-right:4px}
-.nav{display:flex;gap:4px;flex-wrap:wrap}
+.nav{display:flex;gap:4px;flex-wrap:wrap;align-items:center}
+.navg{display:flex;gap:4px;flex-wrap:wrap;align-items:center}
+.navg.lab{border:1px dashed var(--line2);border-radius:10px;padding:4px 6px}
+.navg .gl{font-family:var(--mono);font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--sky);opacity:.9;margin-right:2px}
 .nav button{background:var(--card);border:1px solid var(--line2);border-radius:8px;padding:5px 9px;font-size:13px;font-weight:600}
 .nav button.on{background:var(--brand);color:#fff;border-color:var(--brand)}
 .dock-body{margin-top:10px;display:grid;gap:10px}
@@ -320,11 +323,15 @@ textarea.input{min-height:110px;resize:vertical;font-size:17px;unicode-bidi:plai
 .small{font-size:13px}
 /* big standalone timer */
 .btimer{display:flex;align-items:center;gap:1em;background:linear-gradient(90deg,rgba(26,159,239,.22),var(--card));border:2px solid var(--brand);border-radius:1em;padding:.5em 1em;box-shadow:0 .3em 0 #000}
-.btimer .lbl{font-family:var(--display);font-stretch:78%;font-weight:900;font-size:1.5em;text-transform:uppercase;color:var(--sky)}
-.btimer .tt{margin-left:auto;font-weight:700;font-size:2.4em}
+.btimer .lbl{font-family:var(--display);font-stretch:78%;font-weight:900;font-size:1.5em;text-transform:uppercase;color:var(--sky);display:block}
+.btimer .bt-txt{display:flex;flex-direction:column;gap:.15em}
+.btimer.low .ring{background:conic-gradient(var(--amber) calc(var(--p)*360deg),var(--line) 0)}
+.btimer.done .ring{background:conic-gradient(var(--red) calc(var(--p)*360deg),var(--line) 0)}
 .btimer .up{font-weight:800;color:var(--red)}
-.btimer.low{border-color:var(--amber)} .btimer.low .tt{color:var(--amber)}
+.btimer.low{border-color:var(--amber)}
 .btimer.done{border-color:var(--red);background:linear-gradient(90deg,rgba(255,75,75,.22),var(--card));animation:blink 1s steps(2) infinite}
+.btimer .ring.big{width:104px;height:104px}.btimer .ring.big span{font-size:26px}
 .btimer.ph{padding:8px 12px;border-radius:12px;box-shadow:0 4px 0 #000}
-.btimer.ph .lbl{font-size:14px} .btimer.ph .tt{font-size:22px}
+.btimer.ph .lbl{font-size:15px}
+.btimer.ph .ring.big{width:64px;height:64px}.btimer.ph .ring.big span{font-size:17px}
 .nav.big button{font-size:15px;padding:8px 14px}
