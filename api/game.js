@@ -6,7 +6,7 @@ const C = require("../lib/content");
 const store = require("../lib/store");
 
 const P = "mc:";
-const K = { state: P + "state", players: P + "players", rg: P + "rg", sub: P + "sub", score: P + "score", quiz: P + "quiz" };
+const K = { state: P + "state", players: P + "players", rg: P + "rg", sub: P + "sub", score: P + "score", quiz: P + "quiz", content: P + "content" };
 const HOST_PIN = String(process.env.HOST_PIN || "1234");
 const GRACE_MS = 1500;
 
@@ -23,13 +23,14 @@ function nums(o) { const r = {}; for (const k in o) r[k] = Number(o[k]) || 0; re
 
 let cache = null;
 async function load(fresh) {
-  if (!fresh && cache && Date.now() - cache.t < 700) { setQuiz(cache.d.quiz || C.RG); return cache.d; }
-  const r = await store.pipeline([["GET", K.state], ["HGETALL", K.players], ["HGETALL", K.rg], ["HGETALL", K.sub], ["HGETALL", K.score], ["GET", K.quiz]]);
+  if (!fresh && cache && Date.now() - cache.t < 700) { setQuiz(cache.d.quiz || C.RG); setContent(cache.d.content); return cache.d; }
+  const r = await store.pipeline([["GET", K.state], ["HGETALL", K.players], ["HGETALL", K.rg], ["HGETALL", K.sub], ["HGETALL", K.score], ["GET", K.quiz], ["GET", K.content]]);
   let st = defState();
   if (r[0]) { try { st = { ...st, ...JSON.parse(r[0]) }; } catch (e) { } }
   let quiz = null; if (r[5]) { try { quiz = JSON.parse(r[5]); } catch (e) { } }
-  const d = { st, players: parseJ(toObj(r[1])), rg: toObj(r[2]), sub: parseJ(toObj(r[3])), score: nums(toObj(r[4])), quiz: Array.isArray(quiz) && quiz.length ? quiz : null };
-  setQuiz(d.quiz || C.RG);
+  let content = null; if (r[6]) { try { content = JSON.parse(r[6]); } catch (e) { } }
+  const d = { st, players: parseJ(toObj(r[1])), rg: toObj(r[2]), sub: parseJ(toObj(r[3])), score: nums(toObj(r[4])), quiz: Array.isArray(quiz) && quiz.length ? quiz : null, content: content && content.say ? content : null };
+  setQuiz(d.quiz || C.RG); setContent(d.content);
   cache = { t: Date.now(), d };
   return d;
 }
@@ -41,6 +42,47 @@ async function saveState(st) { st.v = (st.v || 0) + 1; await store.cmd("SET", K.
 let QUIZ = C.RG, Q = {};
 function setQuiz(list) { QUIZ = list; Q = Object.fromEntries(list.map(q => [q.id, q])); }
 setQuiz(C.RG);
+// Group games (Say it / Mystery box / Boss fight) can also be edited live.
+let SAY = C.SAY, BOXES = C.BOXES, BOSS_CASE = C.BOSS_CASE, BOSS_Q = C.BOSS_Q, DROP = C.DROP_OPTIONS, MAX = { ...C.MAX };
+function setContent(c) {
+  SAY = (c && c.say) || C.SAY; BOXES = (c && c.boxes) || C.BOXES;
+  BOSS_CASE = (c && c.boss && c.boss.case) || C.BOSS_CASE;
+  BOSS_Q = (c && c.boss && c.boss.qs) || C.BOSS_Q;
+  DROP = (c && c.boss && c.boss.drop) || C.DROP_OPTIONS;
+  MAX = { say: SAY.length * 5, box: 10, boss: BOSS_Q.reduce((n, q) => n + (q[2] || 0), 0) };
+}
+setContent(null);
+const lvl = v => ["hi", "md", "lo"].includes(v) ? v : "md";
+function sanitizeContent(c) {
+  c = c || {};
+  const say = (Array.isArray(c.say) ? c.say : []).slice(0, 8).map((x, i) => {
+    const pat = (Array.isArray(x.pat) ? x.pat : []).slice(0, 3).map(p => [clean(p && p[0], 60), ["up", "down", "zero"].includes(p && p[1]) ? p[1] : "up"]).filter(p => p[0]);
+    if (!pat.length) throw new Error("Say it case " + (i + 1) + " needs at least one metric.");
+    return { id: clean(x.id, 3) || String.fromCharCode(65 + i), pat, human: clean(x.human, 300), humanAr: clean(x.humanAr, 300), meaning: clean(x.meaning, 300), action: clean(x.action, 300), variant: clean(x.variant, 300) };
+  });
+  if (!say.length) throw new Error("Say it needs at least one case.");
+  const boxes = (Array.isArray(c.boxes) ? c.boxes : []).slice(0, 8).map((x, i) => {
+    const metrics = (Array.isArray(x.metrics) ? x.metrics : []).map(m => clean(m, 40)).filter(Boolean).slice(0, 10);
+    if (metrics.length < 2) throw new Error("Box " + (i + 1) + " needs at least 2 metrics.");
+    const pick = arr => (Array.isArray(arr) ? arr : []).map(m => clean(m, 40)).filter(m => metrics.includes(m));
+    return { id: clean(x.id, 3) || String.fromCharCode(65 + i), level: clean(x.level, 20), format: clean(x.format, 40), content: clean(x.content, 200), objective: clean(x.objective, 60),
+      metrics, trap: metrics.includes(clean(x.trap, 40)) ? clean(x.trap, 40) : metrics[0],
+      primary: clean(x.primary, 160), secondary: clean(x.secondary, 160), diag: clean(x.diag, 200), why: clean(x.why, 300),
+      ex: { p: pick(x.ex && x.ex.p), s: pick(x.ex && x.ex.s), d: pick(x.ex && x.ex.d) } };
+  });
+  if (!boxes.length) throw new Error("Mystery box needs at least one box.");
+  const b = c.boss || {}, k = b.case || {};
+  const bcase = { brand: clean(k.brand, 60) || "Morning Club", offer: clean(k.offer, 120), objective: clean(k.objective, 60), kpi: clean(k.kpi, 60),
+    target: Math.max(0, Math.min(100, Number(k.target) || 0)), actual: Math.max(0, Math.min(100, Number(k.actual) || 0)),
+    data: (Array.isArray(k.data) ? k.data : []).slice(0, 10).map(r => [clean(r && r[0], 40), clean(r && r[1], 40), lvl(r && r[2])]).filter(r => r[0]) };
+  const qs = (Array.isArray(b.qs) ? b.qs : []).slice(0, 12).map((q, i) => {
+    const t = clean(q && q[0], 200); if (!t) throw new Error("Boss question " + (i + 1) + " is empty.");
+    return [t, clean(q[1], 400), Math.max(1, Math.min(10, Number(q[2]) || 1)), ["yesno", "drop", "text"].includes(q[3]) ? q[3] : "text"];
+  });
+  if (!qs.length) throw new Error("Boss fight needs at least one question.");
+  const drop = (Array.isArray(b.drop) ? b.drop : []).map(x => clean(x, 80)).filter(Boolean).slice(0, 8);
+  return { say, boxes, boss: { case: bcase, qs, drop: drop.length ? drop : C.DROP_OPTIONS } };
+}
 function sanitizeQuiz(list) {
   if (!Array.isArray(list) || !list.length) throw new Error("No questions.");
   const seen = new Set();
@@ -99,7 +141,7 @@ function roundQs(r) { return QUIZ.filter(q => q.r === r); }
 function build(d, { pid, host }) {
   const st = d.st, stg = st.stage;
   const players = Object.entries(d.players).map(([id, p]) => ({ id, name: p.name, team: p.team, emoji: p.emoji }));
-  const v = { ok: true, now: Date.now(), v: st.v, stage: stg, teams: st.teams, players, db: store.configured };
+  const v = { ok: true, now: Date.now(), v: st.v, stage: stg, teams: st.teams, players, db: store.configured, timer: st.timer || null };
   let cur = null;
   if (stg.type === "rg") {
     const qs = roundQs(stg.round), R = C.ROUNDS[stg.round] || C.ROUNDS["1"];
@@ -116,31 +158,31 @@ function build(d, { pid, host }) {
       if (host) cur.notVoted = players.filter(p => !vv.by[p.id]).map(p => p.id);
     }
   } else if (stg.type === "say") {
-    const c = C.SAY.find(x => x.id === stg.c) || C.SAY[0];
+    const c = SAY.find(x => x.id === stg.c) || SAY[0];
     const subs = st.teams.map(t => ({ tid: t.id, s: d.sub["say:" + c.id + ":" + t.id] })).filter(x => x.s && x.s.text);
     cur = { id: c.id, pat: c.pat, submitted: subs.map(x => x.tid) };
     if (stg.phase === "reveal" || host) Object.assign(cur, { model: { human: c.human, humanAr: c.humanAr, meaning: c.meaning, action: c.action, variant: c.variant }, answers: subs.map(x => ({ tid: x.tid, text: x.s.text, by: x.s.by })) });
     if (!host && stg.phase !== "reveal") delete cur.model;
   } else if (stg.type === "box") {
-    const pub = C.BOXES.map(b => ({ id: b.id, level: b.level, format: b.format, content: b.content, objective: b.objective, metrics: b.metrics, trap: b.trap }));
+    const pub = BOXES.map(b => ({ id: b.id, level: b.level, format: b.format, content: b.content, objective: b.objective, metrics: b.metrics, trap: b.trap }));
     cur = { assign: st.boxAssign, boxes: pub, submitted: st.teams.filter(t => d.sub["box:" + t.id]).map(t => t.id) };
     if (stg.phase === "reveal" || host) {
-      cur.expected = Object.fromEntries(C.BOXES.map(b => [b.id, { primary: b.primary, secondary: b.secondary, diag: b.diag, why: b.why, ex: b.ex }]));
+      cur.expected = Object.fromEntries(BOXES.map(b => [b.id, { primary: b.primary, secondary: b.secondary, diag: b.diag, why: b.why, ex: b.ex }]));
       cur.picks = Object.fromEntries(st.teams.map(t => [t.id, d.sub["box:" + t.id] || null]));
     }
   } else if (stg.type === "boss") {
-    cur = { case: C.BOSS_CASE, drop: C.DROP_OPTIONS, qs: C.BOSS_Q.map(q => ({ q: q[0], pts: q[2], kind: q[3] })),
+    cur = { case: BOSS_CASE, drop: DROP, qs: BOSS_Q.map(q => ({ q: q[0], pts: q[2], kind: q[3] })),
       submitted: st.teams.filter(t => d.sub["boss:" + t.id]).map(t => t.id),
       notes: Object.keys(d.sub).filter(k => k.startsWith("note:")).length };
     const tt = teamTotals(d); cur.dmg = Object.fromEntries(st.teams.map(t => [t.id, tt[t.id].boss]));
     const avg = st.teams.reduce((a, t) => a + tt[t.id].boss, 0) / Math.max(1, st.teams.length);
-    cur.hp = Math.max(0, Math.round(100 - avg / C.MAX.boss * 100));
-    const shown = host ? C.BOSS_Q.length - 1 : (stg.phase === "reveal" ? (stg.q ?? -1) : -1);
-    cur.keys = C.BOSS_Q.map((q, i) => i <= shown ? q[1] : null);
+    cur.hp = Math.max(0, Math.round(100 - avg / Math.max(1, MAX.boss) * 100));
+    const shown = host ? BOSS_Q.length - 1 : (stg.phase === "reveal" ? (stg.q ?? -1) : -1);
+    cur.keys = BOSS_Q.map((q, i) => i <= shown ? q[1] : null);
     if (stg.phase === "reveal" || host) cur.sheets = Object.fromEntries(st.teams.map(t => [t.id, d.sub["boss:" + t.id] || null]));
   } else if (stg.type === "board") {
     const tt = teamTotals(d);
-    cur = { max: C.MAX, rows: st.teams.map(t => ({ tid: t.id, name: t.name, ...tt[t.id] })).sort((a, b) => b.total - a.total), winner: !!stg.winner };
+    cur = { max: MAX, rows: st.teams.map(t => ({ tid: t.id, name: t.name, ...tt[t.id] })).sort((a, b) => b.total - a.total), winner: !!stg.winner };
   }
   v.cur = cur;
 
@@ -155,9 +197,10 @@ function build(d, { pid, host }) {
   } else if (pid) v.me = null;
 
   if (host) {
-    v.host = { individuals: individuals(d), teamTotals: teamTotals(d), score: d.score, rubric: { say: C.SAY_RUBRIC, box: C.BOX_RUBRIC, boss: C.BOSS_Q.map(q => q[2]) },
+    v.host = { individuals: individuals(d), teamTotals: teamTotals(d), score: d.score, rubric: { say: C.SAY_RUBRIC, box: C.BOX_RUBRIC, boss: BOSS_Q.map(q => q[2]) }, max: MAX,
+      content: { say: SAY, boxes: BOXES, boss: { case: BOSS_CASE, qs: BOSS_Q, drop: DROP } }, customContent: !!d.content,
       notes: Object.fromEntries(Object.keys(d.sub).filter(k => k.startsWith("note:")).map(k => [k.slice(5), d.sub[k].text])),
-      rounds: C.ROUNDS, quiz: QUIZ, customQuiz: !!d.quiz, says: C.SAY.map(s => s.id), rgTotal: revealedCount(d),
+      rounds: C.ROUNDS, quiz: QUIZ, customQuiz: !!d.quiz, says: SAY.map(s => s.id), rgTotal: revealedCount(d),
       roundLens: Object.fromEntries(Object.keys(C.ROUNDS).map(r => [r, roundQs(r).length])) };
     if (stg.type === "rg" && cur && cur.qid) { const q = Q[cur.qid]; cur.a = q.a; cur.e = q.e; cur.d = q.d; cur.c = votesFor(d, q.id).c; }
   }
@@ -244,6 +287,9 @@ module.exports = async function handler(req, res) {
       else if (op === "mic") { st.stage.mic = b.pid || null; await saveState(st); }
       else if (op === "teams") { (b.teams || []).forEach(t => { const x = st.teams.find(y => y.id === t.id); if (x) x.name = clean(t.name, 24) || x.name; }); await saveState(st); }
       else if (op === "quizSave") { const list = sanitizeQuiz(b.quiz); await store.cmd("SET", K.quiz, JSON.stringify(list)); cache = null; return send(res, 200, { ok: true, count: list.length }); }
+      else if (op === "contentSave") { const c = sanitizeContent(b.content); await store.cmd("SET", K.content, JSON.stringify(c)); cache = null; return send(res, 200, { ok: true }); }
+      else if (op === "contentReset") { await store.cmd("DEL", K.content); cache = null; }
+      else if (op === "bigTimer") { st.timer = b.dur ? { label: clean(b.label, 60), startsAt: now, endsAt: now + Number(b.dur) * 1000 } : null; await saveState(st); }
       else if (op === "quizReset") { await store.cmd("DEL", K.quiz); cache = null; }
       else if (op === "teamCount") {
         const n = Math.max(2, Math.min(C.TEAMS.length, Number(b.n) || C.DEFAULT_TEAMS));
