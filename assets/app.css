@@ -318,3 +318,13 @@ textarea.input{min-height:110px;resize:vertical;font-size:17px;unicode-bidi:plai
 .btn.red-on{background:var(--red);border-color:var(--red);color:#fff}
 .btn.green-on{background:var(--green);border-color:var(--green);color:#04130A}
 .small{font-size:13px}
+/* big standalone timer */
+.btimer{display:flex;align-items:center;gap:1em;background:linear-gradient(90deg,rgba(26,159,239,.22),var(--card));border:2px solid var(--brand);border-radius:1em;padding:.5em 1em;box-shadow:0 .3em 0 #000}
+.btimer .lbl{font-family:var(--display);font-stretch:78%;font-weight:900;font-size:1.5em;text-transform:uppercase;color:var(--sky)}
+.btimer .tt{margin-left:auto;font-weight:700;font-size:2.4em}
+.btimer .up{font-weight:800;color:var(--red)}
+.btimer.low{border-color:var(--amber)} .btimer.low .tt{color:var(--amber)}
+.btimer.done{border-color:var(--red);background:linear-gradient(90deg,rgba(255,75,75,.22),var(--card));animation:blink 1s steps(2) infinite}
+.btimer.ph{padding:8px 12px;border-radius:12px;box-shadow:0 4px 0 #000}
+.btimer.ph .lbl{font-size:14px} .btimer.ph .tt{font-size:22px}
+.nav.big button{font-size:15px;padding:8px 14px}

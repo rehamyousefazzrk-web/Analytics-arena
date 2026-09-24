@@ -123,6 +123,12 @@ function countdownHTML(c, st, phone) {
     ${c.idx === 0 ? `<div class="lvl-up">${esc(lv[0])}</div><div class="lvl-sub">${esc(lv[1])}</div>` : `<div class="disp ${phone ? "" : "sh2"}" style="${phone ? "font-size:30px" : ""}">Question ${c.idx + 1} of ${c.total}</div>`}
     <div class="cd ready" data-cd="${st.startsAt}">Ready?</div></div>`;
 }
+function bigTimerHTML(phone) {
+  const t = V && V.timer; if (!t) return "";
+  const left = (t.endsAt - now()) / 1000; if (left < -20) return "";
+  return `<div class="btimer ${phone ? "ph" : ""} ${left <= 0 ? "done" : ""}" data-ends="${t.endsAt}" data-start="${t.startsAt}">
+    <span class="lbl">${esc(t.label || "Timer")}</span><span class="tt mono" data-t>…</span>${left <= 0 ? `<span class="up">TIME'S UP</span>` : ""}</div>`;
+}
 function patHTML(p) { return p.map(([n, d]) => `${esc(n)} <span class="${d === "up" ? "up" : "down"}">${d === "up" ? "↑" : d === "down" ? "↓" : "= 0"}</span>`).join(" + "); }
 
 /* =====================================================================
@@ -135,12 +141,12 @@ function renderPlayer() {
   if (!V) { app.innerHTML = `<div class="phone"><div class="wait"><span class="em">⏳</span><p>Connecting…</p></div></div>`; return; }
   if (!pid || !V.me || editing) return renderJoin(app);
   const me = V.me, stg = V.stage, cur = V.cur;
-  const sig = JSON.stringify([stg, me, cur && { ...cur, voted: 0, of: 0, notes: 0 }, V.teams]);
+  const sig = JSON.stringify([stg, me, cur && { ...cur, voted: 0, of: 0, notes: 0 }, V.teams, V.timer]);
   if (sig === lastSig) return;
   let prev = null; try { prev = JSON.parse(lastSig)[0]; } catch (e) {}
   if (typing() && prev && prev.type === stg.type && prev.phase === stg.phase) return;
   lastSig = sig;
-  const head = `<header><div class="me-badge tcol" data-t="${me.team}"><span class="em">${esc(me.emoji)}</span>${esc(me.name)} · ${tname(me.team)}</div>
+  const head = bigTimerHTML(true) + `<header><div class="me-badge tcol" data-t="${me.team}"><span class="em">${esc(me.emoji)}</span>${esc(me.name)} · ${tname(me.team)}</div>
     <div class="score-badge">⭐ ${me.score}</div></header>`;
   let body = "";
   const t = stg.type, ph = stg.phase;
@@ -287,7 +293,7 @@ async function playerAct(a, d) {
 let prevPlayers = 0, prevPhaseKey = "", prevHP = null;
 function screenHTML() {
   const s = V.stage, c = V.cur, t = s.type, ph = s.phase;
-  const top = `<div class="sbar"><div class="logo"><img src="/assets/logo.png" alt="" onerror="this.remove()"><i></i><span>Analytics <b>Arena</b></span></div><div class="count">👥 ${V.players.length} players</div></div>`;
+  const top = bigTimerHTML(false) + `<div class="sbar"><div class="logo"><img src="/assets/logo.png" alt="" onerror="this.remove()"><i></i><span>Analytics <b>Arena</b></span></div><div class="count">👥 ${V.players.length} players</div></div>`;
   let h = "";
   if (t === "lobby") {
     const url = location.origin.replace(/^https?:\/\//, "");
@@ -367,7 +373,7 @@ function screenHTML() {
   return top + `<div class="stage">${h}</div>`;
 }
 function renderScreen(root) {
-  const sig = JSON.stringify([V.stage, V.cur && { ...V.cur, notVoted: 0, keys: V.stage.type === "boss" ? V.stage.q : 0 }, V.players, V.teams, inCountdown(V.stage)]);
+  const sig = JSON.stringify([V.stage, V.cur && { ...V.cur, notVoted: 0, keys: V.stage.type === "boss" ? V.stage.q : 0 }, V.players, V.teams, inCountdown(V.stage), V.timer]);
   if (sig === lastSig) return;
   lastSig = sig;
   root.innerHTML = `<div class="screen">${screenHTML()}</div>`;
@@ -416,7 +422,7 @@ function curSection() { const s = V.stage; return s.type === "rg" ? "rg:" + s.ro
 function dockHTML() {
   const s = V.stage, c = V.cur, H = V.host, sc = H.score;
   const nav = `<div class="dock-top"><span class="lbl">Trainer</span><div class="nav">${SECTIONS.map(([k, l]) => `<button class="${curSection() === k ? "on" : ""}" data-act="go" data-k="${k}">${l}</button>`).join("")}</div><div class="spacer"></div>
-    <button class="btn sm" data-act="timerAdd">+30s</button><button class="btn sm" data-act="timerStop">Stop timer</button><button class="btn sm" data-act="scores">🔒 Private scores</button><button class="btn sm" data-act="edOpen">✏️ Questions</button>
+    <button class="btn sm" data-act="timerAdd">+30s</button><button class="btn sm" data-act="timerStop">Stop timer</button><button class="btn sm" data-act="scores">🔒 Private scores</button><button class="btn sm" data-act="edOpen">✏️ Content</button><button class="btn sm ${V.timer ? "amber" : ""}" data-act="timerOpen">⏱ Big timer</button>
     <button class="btn sm ${soundOn ? "amber" : ""}" data-act="sound">${soundOn ? "🔊" : "🔇"}</button><button class="btn sm" data-act="min" title="P">${dockMin ? "▲ Show" : "▼ Hide"} <span class="kbd">P</span></button></div>`;
   let b = "";
   if (s.type === "lobby") {
@@ -489,9 +495,96 @@ function csv() {
   V.teams.forEach(t => { const x = H.teamTotals[t.id]; out += [q(t.name), x.say, x.box, x.boss, x.total].join(",") + "\n"; });
   const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob(["﻿" + out], { type: "text/csv" })); a.download = "analytics-arena-scores.csv"; document.body.appendChild(a); a.click(); a.remove();
 }
-/* ---------------- question editor ---------------- */
-let ED = null, edRound = "1", edOrig = "";
-function edOpen() { ED = JSON.parse(JSON.stringify(V.host.quiz)); edOrig = JSON.stringify(ED); edRound = V.stage.type === "rg" && V.host.rounds[V.stage.round] ? V.stage.round : "1"; renderEditor(); }
+/* ---------------- standalone big timer ---------------- */
+function timerModal() {
+  let m = $("#timerModal");
+  if (!m) { m = document.createElement("div"); m.className = "modal"; m.id = "timerModal"; document.body.appendChild(m); }
+  m.innerHTML = `<div class="in" style="max-width:520px"><div class="row"><h2 class="disp sh2" style="margin:0;font-size:30px">⏱ Big timer</h2><div class="spacer"></div><button class="btn sm" data-act="timerClose">Close</button></div>
+    <p class="muted small">Runs on its own — use it for breaks, discussions or anything outside the games. It shows on the big screen and on every phone.</p>
+    <label class="eyebrow">Label</label><input class="hinput" id="tmLabel" style="width:100%" value="${esc((V.timer && V.timer.label) || "")}" placeholder="Break · Discussion · Group work">
+    <label class="eyebrow" style="display:block;margin-top:12px">Start</label>
+    <div class="row">${[1, 2, 3, 5, 7, 10, 15, 20].map(n => `<button class="btn sm" data-act="timerGo" data-m="${n}">${n} min</button>`).join("")}</div>
+    <div class="row" style="margin-top:10px"><input class="hinput" id="tmCustom" type="number" min="1" max="120" placeholder="minutes" style="width:110px"><button class="btn red" data-act="timerGo" data-m="custom">Start</button>
+    <div class="spacer"></div><button class="btn sm ghost" data-act="timerStopBig">Stop timer</button></div>`;
+}
+/* ---------------- question & content editor ---------------- */
+let ED = null, EDC = null, edRound = "1", edTab = "ind", edGroup = "say", edOrig = "";
+const clone = x => JSON.parse(JSON.stringify(x));
+function edOpen() {
+  ED = clone(V.host.quiz); EDC = clone(V.host.content); edOrig = JSON.stringify([ED, EDC]);
+  const t = V.stage.type;
+  edTab = ["say", "box", "boss"].includes(t) ? "group" : "ind";
+  if (t === "say") edGroup = "say"; else if (t === "box") edGroup = "box"; else if (t === "boss") edGroup = "boss";
+  edRound = t === "rg" && V.host.rounds[V.stage.round] ? V.stage.round : "1";
+  renderEditor();
+}
+function setPath(o, path, val) { const k = path.split("."); let c = o; for (let i = 0; i < k.length - 1; i++) c = c[k[i]]; c[k.at(-1)] = val; }
+function getPath(o, path) { return path.split(".").reduce((c, k) => (c == null ? c : c[k]), o); }
+const fld = (label, path, val, opts = {}) => `<label class="eyebrow">${esc(label)}</label>${opts.area
+  ? `<textarea class="hinput" rows="${opts.rows || 2}" data-cf="${path}" dir="auto">${esc(val || "")}</textarea>`
+  : `<input class="hinput" data-cf="${path}" value="${esc(val ?? "")}" dir="auto" ${opts.num ? 'type="number" step="0.1"' : ""} placeholder="${esc(opts.ph || "")}">`}`;
+
+function groupHTML() {
+  const tabs = `<div class="nav" style="margin-bottom:6px">${[["say", "💬 Say it like a human"], ["box", "🎁 Mystery box"], ["boss", "👾 Boss fight"]].map(([k, l]) => `<button class="${edGroup === k ? "on" : ""}" data-act="edGroup" data-g="${k}">${l}</button>`).join("")}</div>`;
+  if (edGroup === "say") return tabs + EDC.say.map((c, i) => `<div class="qed"><div class="row"><b class="mono">Case ${esc(c.id)}</b><span class="spacer"></span>
+      <button class="btn sm ghost" data-act="edGMove" data-g="say" data-i="${i}" data-v="-1" ${i === 0 ? "disabled" : ""}>↑</button>
+      <button class="btn sm ghost" data-act="edGMove" data-g="say" data-i="${i}" data-v="1" ${i === EDC.say.length - 1 ? "disabled" : ""}>↓</button>
+      <button class="btn sm ghost" data-act="edGDel" data-g="say" data-i="${i}">🗑</button></div>
+    <label class="eyebrow">The data pattern shown on screen</label>
+    ${c.pat.map((p, j) => `<div class="row" style="flex-wrap:nowrap"><input class="hinput" style="flex:1" data-cf="say.${i}.pat.${j}.0" value="${esc(p[0])}" placeholder="Metric name">
+      <span class="seg">${[["up", "↑ up"], ["down", "↓ down"], ["zero", "= 0"]].map(([v, l]) => `<button class="${p[1] === v ? "on" : ""}" data-act="edSet" data-p="say.${i}.pat.${j}.1" data-v="${v}">${l}</button>`).join("")}</span>
+      <button class="btn sm ghost" data-act="edPatDel" data-i="${i}" data-j="${j}" ${c.pat.length < 2 ? "disabled" : ""}>✕</button></div>`).join("")}
+    <div><button class="btn sm ghost" data-act="edPatAdd" data-i="${i}">+ metric</button></div>
+    ${fld("Model answer — human sentence (English)", `say.${i}.human`, c.human, { area: 1 })}
+    ${fld("Model answer — Arabic (optional)", `say.${i}.humanAr`, c.humanAr, { area: 1 })}
+    ${fld("Analytical meaning", `say.${i}.meaning`, c.meaning, { area: 1 })}
+    ${fld("First action", `say.${i}.action`, c.action, { area: 1 })}
+    ${fld("Bonus variant (optional)", `say.${i}.variant`, c.variant, { area: 1 })}</div>`).join("")
+    + `<div class="row" style="margin-top:12px"><button class="btn sm" data-act="edGAdd" data-g="say">+ Add case</button></div>`;
+
+  if (edGroup === "box") return tabs + EDC.boxes.map((b, i) => {
+    const chips = (key, label) => `<label class="eyebrow">${label}</label><div class="row">${b.metrics.map(m => `<button class="chip" style="font-size:12px;padding:4px 10px" data-act="edTog" data-p="boxes.${i}.ex.${key}" data-v="${esc(m)}" aria-pressed="${(b.ex[key] || []).includes(m)}">${esc(m)}</button>`).join("")}</div>`;
+    return `<div class="qed"><div class="row"><b class="mono">Box ${esc(b.id)}</b><span class="spacer"></span>
+      <button class="btn sm ghost" data-act="edGMove" data-g="boxes" data-i="${i}" data-v="-1" ${i === 0 ? "disabled" : ""}>↑</button>
+      <button class="btn sm ghost" data-act="edGMove" data-g="boxes" data-i="${i}" data-v="1" ${i === EDC.boxes.length - 1 ? "disabled" : ""}>↓</button>
+      <button class="btn sm ghost" data-act="edGDel" data-g="boxes" data-i="${i}">🗑</button></div>
+    <div class="row" style="flex-wrap:nowrap">${fld("Level", `boxes.${i}.level`, b.level, { ph: "Easy / Medium / Hard" })}${fld("Format", `boxes.${i}.format`, b.format, { ph: "Reel / Carousel / Stories" })}</div>
+    ${fld("Content idea", `boxes.${i}.content`, b.content, { area: 1 })}
+    ${fld("Objective", `boxes.${i}.objective`, b.objective, { ph: "Discovery / Utility / …" })}
+    ${fld("Metrics in the box — separate with commas", `boxes.${i}.metricsText`, b.metrics.join(", "), { area: 1 })}
+    <label class="eyebrow">🔥 Trap metric</label><div class="row">${b.metrics.map(m => `<button class="chip trap" style="font-size:12px;padding:4px 10px" data-act="edSet" data-p="boxes.${i}.trap" data-v="${esc(m)}" aria-pressed="${b.trap === m}">${esc(m)}</button>`).join("")}</div>
+    ${chips("p", "✓ Metrics that count as a correct Primary KPI")}
+    ${chips("s", "✓ Metrics that count as Secondary")}
+    ${chips("d", "✓ Metrics that count as Diagnostic")}
+    ${fld("Expected Primary KPI (text shown on screen)", `boxes.${i}.primary`, b.primary)}
+    ${fld("Expected Secondary KPI", `boxes.${i}.secondary`, b.secondary)}
+    ${fld("Diagnostics / factors", `boxes.${i}.diag`, b.diag)}
+    ${fld("Why", `boxes.${i}.why`, b.why, { area: 1 })}</div>`; }).join("")
+    + `<div class="row" style="margin-top:12px"><button class="btn sm" data-act="edGAdd" data-g="boxes">+ Add box</button></div>`;
+
+  const k = EDC.boss.case;
+  return tabs + `<div class="qed"><b class="mono">The case</b>
+    <div class="row" style="flex-wrap:nowrap">${fld("Brand", "boss.case.brand", k.brand)}${fld("Offer", "boss.case.offer", k.offer)}</div>
+    <div class="row" style="flex-wrap:nowrap">${fld("Objective", "boss.case.objective", k.objective)}${fld("Primary KPI", "boss.case.kpi", k.kpi)}</div>
+    <div class="row" style="flex-wrap:nowrap">${fld("Target %", "boss.case.target", k.target, { num: 1 })}${fld("Actual %", "boss.case.actual", k.actual, { num: 1 })}</div>
+    <label class="eyebrow">Supporting data</label>
+    ${k.data.map((r, i) => `<div class="row" style="flex-wrap:nowrap"><input class="hinput" style="flex:1" data-cf="boss.case.data.${i}.0" value="${esc(r[0])}" placeholder="Metric">
+      <input class="hinput" style="flex:1" data-cf="boss.case.data.${i}.1" value="${esc(r[1])}" placeholder="HIGH / LOW / …">
+      <span class="seg">${[["hi", "green"], ["md", "amber"], ["lo", "red"]].map(([v, l]) => `<button class="${r[2] === v ? "on" : ""}" data-act="edSet" data-p="boss.case.data.${i}.2" data-v="${v}">${l}</button>`).join("")}</span>
+      <button class="btn sm ghost" data-act="edDataDel" data-i="${i}">✕</button></div>`).join("")}
+    <div><button class="btn sm ghost" data-act="edDataAdd">+ row</button></div>
+    ${fld("Drop-off options players choose from (one per line)", "boss.dropText", (EDC.boss.drop || []).join("\n"), { area: 1, rows: 5 })}</div>
+    ${EDC.boss.qs.map((q, i) => `<div class="qed"><div class="row"><b class="mono">Q${i + 1}</b>
+      <span class="muted small">Answer type</span><span class="seg">${[["yesno", "Yes / No"], ["drop", "Drop-off list"], ["text", "Writing"]].map(([v, l]) => `<button class="${q[3] === v ? "on" : ""}" data-act="edSet" data-p="boss.qs.${i}.3" data-v="${v}">${l}</button>`).join("")}</span>
+      <span class="muted small">Points</span><span class="seg">${[1, 2, 3, 4, 5].map(pt => `<button class="${q[2] === pt ? "on" : ""}" data-act="edSetNum" data-p="boss.qs.${i}.2" data-v="${pt}">${pt}</button>`).join("")}</span>
+      <span class="spacer"></span>
+      <button class="btn sm ghost" data-act="edGMove" data-g="boss.qs" data-i="${i}" data-v="-1" ${i === 0 ? "disabled" : ""}>↑</button>
+      <button class="btn sm ghost" data-act="edGMove" data-g="boss.qs" data-i="${i}" data-v="1" ${i === EDC.boss.qs.length - 1 ? "disabled" : ""}>↓</button>
+      <button class="btn sm ghost" data-act="edGDel" data-g="boss.qs" data-i="${i}">🗑</button></div>
+      ${fld("Question", `boss.qs.${i}.0`, q[0], { area: 1 })}
+      ${fld("Answer key — shown when you reveal", `boss.qs.${i}.1`, q[1], { area: 1 })}</div>`).join("")}
+    <div class="row" style="margin-top:12px"><button class="btn sm" data-act="edGAdd" data-g="boss.qs">+ Add question</button></div>`;
+}
 function renderEditor() {
   const R = V.host.rounds;
   const items = ED.map((q, i) => ({ q, i })).filter(x => x.q.r === edRound);
@@ -515,23 +608,53 @@ function renderEditor() {
   </div>`;
   let m = $("#qEditor"); const scroll = m ? m.scrollTop : 0;
   if (!m) { m = document.createElement("div"); m.className = "modal"; m.id = "qEditor"; document.body.appendChild(m); }
-  m.innerHTML = `<div class="in"><div class="row"><h2 class="disp sh2" style="margin:0;font-size:32px">✏️ Edit questions</h2>${V.host.customQuiz ? `<span class="chip" style="font-size:12px">edited version live</span>` : `<span class="chip" style="font-size:12px">original questions</span>`}<div class="spacer"></div>
-      <button class="btn sm ghost" data-act="edReset">Reset to original</button><button class="btn sm" data-act="edClose">Close</button><button class="btn sm red" data-act="edSave">💾 Save changes</button></div>
-    <p class="muted small" style="margin:8px 0 12px">Changes go live for everyone as soon as you save — no GitHub needed. Editing a question that was already answered keeps the votes.</p>
-    <div class="nav">${Object.entries(R).map(([k, r]) => `<button class="${edRound === k ? "on" : ""}" data-act="edRound" data-r="${k}">${esc(r.name)} <span class="mono" style="opacity:.6">${ED.filter(q => q.r === k).length}</span></button>`).join("")}</div>
+  const indBody = `<div class="nav">${Object.entries(R).map(([k, r]) => `<button class="${edRound === k ? "on" : ""}" data-act="edRound" data-r="${k}">${esc(r.name)} <span class="mono" style="opacity:.6">${ED.filter(q => q.r === k).length}</span></button>`).join("")}</div>
     <div class="muted small" style="margin-top:8px">${esc(R[edRound].rule)} · ${esc(R[edRound].level)}</div>
     ${items.map(card).join("") || `<p class="muted">No questions in this round yet.</p>`}
-    <div class="row" style="margin-top:12px"><button class="btn sm" data-act="edAdd" data-v="rg">+ Add Red/Green statement</button><button class="btn sm" data-act="edAdd" data-v="mcq">+ Add multiple choice</button><div class="spacer"></div><button class="btn sm red" data-act="edSave">💾 Save changes</button></div></div>`;
+    <div class="row" style="margin-top:12px"><button class="btn sm" data-act="edAdd" data-v="rg">+ Add Red/Green statement</button><button class="btn sm" data-act="edAdd" data-v="mcq">+ Add multiple choice</button></div>`;
+  const edited = edTab === "ind" ? V.host.customQuiz : V.host.customContent;
+  m.innerHTML = `<div class="in"><div class="row"><h2 class="disp sh2" style="margin:0;font-size:32px">✏️ Edit content</h2><span class="chip" style="font-size:12px">${edited ? "edited version live" : "original from the session file"}</span><div class="spacer"></div>
+      <button class="btn sm ghost" data-act="edReset">Reset this tab</button><button class="btn sm" data-act="edClose">Close</button><button class="btn sm red" data-act="edSave">💾 Save changes</button></div>
+    <p class="muted small" style="margin:8px 0 12px">Changes go live for everyone as soon as you save — no GitHub needed. Answers already given are kept.</p>
+    <div class="nav big">${[["ind", "👤 Individual questions"], ["group", "👥 Group games"]].map(([k, l]) => `<button class="${edTab === k ? "on" : ""}" data-act="edTab" data-t="${k}">${l}</button>`).join("")}</div>
+    <div style="margin-top:12px">${edTab === "ind" ? indBody : groupHTML()}</div>
+    <div class="row" style="margin-top:14px"><div class="spacer"></div><button class="btn red" data-act="edSave">💾 Save changes</button></div></div>`;
   m.scrollTop = scroll;
 }
 document.addEventListener("input", e => {
-  const el = e.target; if (!ED || !el.dataset.ef) return; const q = ED[+el.dataset.i]; if (!q) return;
+  const el = e.target;
+  if (EDC && el.dataset.cf) {
+    const path = el.dataset.cf;
+    if (path.endsWith(".metricsText")) { const i = +path.split(".")[1]; EDC.boxes[i].metrics = el.value.split(",").map(x => x.trim()).filter(Boolean); }
+    else if (path === "boss.dropText") EDC.boss.drop = el.value.split("\n").map(x => x.trim()).filter(Boolean);
+    else if (path === "boss.case.target" || path === "boss.case.actual") setPath(EDC, path, Number(el.value) || 0);
+    else setPath(EDC, path, el.value);
+    return;
+  }
+  if (!ED || !el.dataset.ef) return; const q = ED[+el.dataset.i]; if (!q) return;
   if (el.dataset.ef === "opt") { q.opts = q.opts || ["", "", "", ""]; while (q.opts.length < 4) q.opts.push(""); q.opts[+el.dataset.o] = el.value; }
   else q[el.dataset.ef] = el.value;
 });
 function edAct(a, d) {
   const i = +d.i, q = ED && ED[i];
-  if (a === "edRound") edRound = d.r;
+  const arrOf = g => g === "boss.qs" ? EDC.boss.qs : EDC[g];
+  if (a === "edTab") edTab = d.t;
+  else if (a === "edGroup") edGroup = d.g;
+  else if (a === "edSet") setPath(EDC, d.p, d.v);
+  else if (a === "edSetNum") setPath(EDC, d.p, Number(d.v));
+  else if (a === "edTog") { const list = getPath(EDC, d.p) || []; const k = list.indexOf(d.v); k >= 0 ? list.splice(k, 1) : list.push(d.v); setPath(EDC, d.p, list); }
+  else if (a === "edPatAdd") EDC.say[i].pat.push(["", "up"]);
+  else if (a === "edPatDel") EDC.say[i].pat.splice(+d.j, 1);
+  else if (a === "edDataAdd") EDC.boss.case.data.push(["", "", "md"]);
+  else if (a === "edDataDel") EDC.boss.case.data.splice(i, 1);
+  else if (a === "edGMove") { const arr = arrOf(d.g), to = i + (+d.v); if (to < 0 || to >= arr.length) return; [arr[i], arr[to]] = [arr[to], arr[i]]; }
+  else if (a === "edGDel") { const arr = arrOf(d.g); if (arr.length < 2) return toast("You need at least one"); if (!confirm("Delete this?")) return; arr.splice(i, 1); }
+  else if (a === "edGAdd") {
+    if (d.g === "say") EDC.say.push({ id: String.fromCharCode(65 + EDC.say.length), pat: [["Reach", "up"], ["Retention", "down"]], human: "", humanAr: "", meaning: "", action: "", variant: "" });
+    else if (d.g === "boxes") EDC.boxes.push({ id: String.fromCharCode(65 + EDC.boxes.length), level: "Medium", format: "Reel", content: "", objective: "", metrics: ["Reach", "Likes", "Saves", "Shares"], trap: "Likes", primary: "", secondary: "", diag: "", why: "", ex: { p: [], s: [], d: [] } });
+    else EDC.boss.qs.push(["", "", 3, "text"]);
+  }
+  else if (a === "edRound") edRound = d.r;
   else if (a === "edType") { q.type = d.v; if (d.v === "mcq") { q.opts = q.opts && q.opts.length ? q.opts : ["", "", "", ""]; if (!"ABCD".includes(q.a)) q.a = "A"; } else { q.a = q.a === "G" ? "G" : "R"; } }
   else if (a === "edPts") q.pts = +d.v;
   else if (a === "edAns") q.a = d.v;
@@ -558,10 +681,22 @@ async function hostAct(a, d) {
     case "pin": pin = $("#f-pin").value.trim(); ls.set("mc-pin", pin); $("#app").innerHTML = ""; lastSig = ""; lastDockSig = ""; return refresh();
     case "go": return goSection(d.k);
     case "edOpen": return edOpen();
-    case "edClose": if (JSON.stringify(ED) !== edOrig && !confirm("Close without saving your changes?")) return; ED = null; { const m = $("#qEditor"); m && m.remove(); } return;
-    case "edSave": { const ok = await host("quizSave", { quiz: ED }); if (ok) { toast("Saved ✓ — live for everyone"); ED = JSON.parse(JSON.stringify(V.host.quiz)); edOrig = JSON.stringify(ED); renderEditor(); } return; }
-    case "edReset": if (!confirm("Go back to the original questions from the session file? Your edits will be removed.")) return; await host("quizReset"); ED = JSON.parse(JSON.stringify(V.host.quiz)); edOrig = JSON.stringify(ED); renderEditor(); toast("Original questions restored"); return;
-    case "edRound": case "edType": case "edPts": case "edAns": case "edDel": case "edMove": case "edAdd": return edAct(a, d);
+    case "timerOpen": return timerModal();
+    case "timerClose": { const m = $("#timerModal"); m && m.remove(); return; }
+    case "timerGo": { const mins = d.m === "custom" ? Number(($("#tmCustom") || {}).value) : Number(d.m); if (!mins || mins < 1) return toast("Write how many minutes"); await host("bigTimer", { dur: Math.round(mins * 60), label: ($("#tmLabel") || {}).value || "" }); toast("Timer started"); return; }
+    case "timerStopBig": { await host("bigTimer", { dur: 0 }); toast("Timer stopped"); return; }
+    case "edClose": if (JSON.stringify([ED, EDC]) !== edOrig && !confirm("Close without saving your changes?")) return; ED = null; EDC = null; { const m = $("#qEditor"); m && m.remove(); } return;
+    case "edSave": {
+      const ok = edTab === "ind" ? await host("quizSave", { quiz: ED }) : await host("contentSave", { content: EDC });
+      if (ok) { toast("Saved ✓ — live for everyone"); ED = clone(V.host.quiz); EDC = clone(V.host.content); edOrig = JSON.stringify([ED, EDC]); renderEditor(); }
+      return; }
+    case "edReset": {
+      if (!confirm("Go back to the original " + (edTab === "ind" ? "questions" : "group games") + " from the session file? Your edits here will be removed.")) return;
+      await host(edTab === "ind" ? "quizReset" : "contentReset");
+      ED = clone(V.host.quiz); EDC = clone(V.host.content); edOrig = JSON.stringify([ED, EDC]); renderEditor(); toast("Original content restored"); return; }
+    case "edRound": case "edType": case "edPts": case "edAns": case "edDel": case "edMove": case "edAdd":
+    case "edTab": case "edGroup": case "edSet": case "edSetNum": case "edTog": case "edPatAdd": case "edPatDel":
+    case "edDataAdd": case "edDataDel": case "edGMove": case "edGDel": case "edGAdd": return edAct(a, d);
     case "nextSection": { const i = SECTIONS.findIndex(x => x[0] === curSection()); return goSection(SECTIONS[Math.min(SECTIONS.length - 1, i + 1)][0]); }
     case "min": dockMin = !dockMin; ls.set("mc-dockmin", dockMin); lastDockSig = ""; return render();
     case "sound": soundOn = !soundOn; sfx("join"); lastDockSig = ""; return render();
