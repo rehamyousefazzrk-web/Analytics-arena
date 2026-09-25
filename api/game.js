@@ -6,7 +6,7 @@ const C = require("../lib/content");
 const store = require("../lib/store");
 
 const P = "mc:";
-const K = { state: P + "state", players: P + "players", rg: P + "rg", rgt: P + "rgt", setup: P + "setup", imgs: P + "imgs", imgv: P + "imgv", auth: P + "auth", devs: P + "devs", sub: P + "sub", score: P + "score", quiz: P + "quiz", content: P + "content" };
+const K = { state: P + "state", players: P + "players", rg: P + "rg", rgt: P + "rgt", setup: P + "setup", imgs: P + "imgs", imgv: P + "imgv", auth: P + "auth", devs: P + "devs", files: P + "files", filev: P + "filev", sub: P + "sub", score: P + "score", quiz: P + "quiz", content: P + "content" };
 const crypto = require("crypto");
 const HOST_PIN = String(process.env.HOST_PIN || "1234");
 // Set HOST_PIN to "none" (or "off") in Vercel and the trainer page opens with no password at all.
@@ -28,13 +28,13 @@ function nums(o) { const r = {}; for (const k in o) r[k] = Number(o[k]) || 0; re
 let cache = null;
 async function load(fresh) {
   if (!fresh && cache && Date.now() - cache.t < 700) { setQuiz(cache.d.quiz || C.RG); setContent(cache.d.content); setSetup(cache.d.setup); return cache.d; }
-  const r = await store.pipeline([["GET", K.state], ["HGETALL", K.players], ["HGETALL", K.rg], ["HGETALL", K.sub], ["HGETALL", K.score], ["GET", K.quiz], ["GET", K.content], ["HGETALL", K.rgt], ["GET", K.setup], ["HGETALL", K.imgv], ["GET", K.auth]]);
+  const r = await store.pipeline([["GET", K.state], ["HGETALL", K.players], ["HGETALL", K.rg], ["HGETALL", K.sub], ["HGETALL", K.score], ["GET", K.quiz], ["GET", K.content], ["HGETALL", K.rgt], ["GET", K.setup], ["HGETALL", K.imgv], ["GET", K.auth], ["HGETALL", K.filev]]);
   let st = defState();
   if (r[0]) { try { st = { ...st, ...JSON.parse(r[0]) }; } catch (e) { } }
   let quiz = null; if (r[5]) { try { quiz = JSON.parse(r[5]); } catch (e) { } }
   let content = null; if (r[6]) { try { content = JSON.parse(r[6]); } catch (e) { } }
   let setup = null; if (r[8]) { try { setup = JSON.parse(r[8]); } catch (e) { } }
-  const d = { st, players: parseJ(toObj(r[1])), rg: toObj(r[2]), rgt: nums(toObj(r[7])), sub: parseJ(toObj(r[3])), score: nums(toObj(r[4])), quiz: Array.isArray(quiz) && quiz.length ? quiz : null, content: content && content.say ? content : null, setup: setup && setup.name ? setup : null, imgv: nums(toObj(r[9])), auth: (() => { try { return r[10] ? JSON.parse(r[10]) : null; } catch (e) { return null; } })() };
+  const d = { st, players: parseJ(toObj(r[1])), rg: toObj(r[2]), rgt: nums(toObj(r[7])), sub: parseJ(toObj(r[3])), score: nums(toObj(r[4])), quiz: Array.isArray(quiz) && quiz.length ? quiz : null, content: content && content.say ? content : null, setup: setup && setup.name ? setup : null, imgv: nums(toObj(r[9])), auth: (() => { try { return r[10] ? JSON.parse(r[10]) : null; } catch (e) { return null; } })(), filev: parseJ(toObj(r[11])) };
   setQuiz(d.quiz || C.RG); setContent(d.content); setSetup(d.setup);
   cache = { t: Date.now(), d };
   return d;
@@ -56,7 +56,7 @@ setSetup(null);
 const HEX = /^#[0-9a-fA-F]{6}$/;
 function sanitizeSetup(x) {
   x = x || {};
-  const sc = x.scoring || {}, tm = x.timers || {}, fl = x.flag || {}, gm = x.games || {};
+  const sc = x.scoring || {}, tm = x.timers || {}, fl = x.flag || {}, gm = x.games || {}, lm = x.limits || {};
   const emojis = (Array.isArray(x.emojis) ? x.emojis : []).map(e => clean(e, 8)).filter(Boolean).slice(0, 80);
   const seen = new Set();
   const rounds = (Array.isArray(x.rounds) ? x.rounds : []).slice(0, 30).map((r, i) => {
@@ -74,6 +74,7 @@ function sanitizeSetup(x) {
             G: { label: clean(fl.G && fl.G.label, 24) || "Green flag", emoji: clean(fl.G && fl.G.emoji, 8) || "\u2705" } },
     games: { say: gm.say !== false, box: gm.box !== false, boss: gm.boss !== false },
     scoring: { base: Math.max(1, Math.min(1000, Number(sc.base) || 100)), speed: Math.max(0, Math.min(200, Number(sc.speed) ?? 50)), poll: Math.max(0, Math.min(1000, Number(sc.poll) || 0)) },
+    limits: { text: Math.max(100, Math.min(5000, Number(lm.text) || 1000)) },
     timers: { rg: Math.max(5, Math.min(600, Number(tm.rg) || 20)), mcq: Math.max(5, Math.min(600, Number(tm.mcq) || 30)), mcqLong: Math.max(5, Math.min(600, Number(tm.mcqLong) || 40)), text: Math.max(5, Math.min(900, Number(tm.text) || 60)) },
     rounds };
 }
@@ -239,7 +240,7 @@ function build(d, { pid, host }) {
       if (!q) cur = { round: stg.round, roundName: R.name, rule: R.rule, level: R.level, kind: R.kind, empty: true, idx: 0, total: 0 };
       else {
       const vv = votesFor(d, q.id);
-      cur = { round: stg.round, roundName: R.name, rule: R.rule, level: R.level, kind: R.kind, idx: stg.idx || 0, total: qs.length, qid: q.id, t: q.t, type: q.type, team: !!q.team, opts: q.opts || null, pts: q.pts || 1, img: d.imgv[q.id] || 0, voted: vv.n, of: q.team ? st.teams.length : players.length };
+      cur = { round: stg.round, roundName: R.name, rule: R.rule, level: R.level, kind: R.kind, idx: stg.idx || 0, total: qs.length, qid: q.id, t: q.t, type: q.type, team: !!q.team, opts: q.opts || null, pts: q.pts || 1, img: d.imgv[q.id] || 0, file: d.filev[q.id] || null, voted: vv.n, of: q.team ? st.teams.length : players.length };
       if (q.team) cur.submitted = Object.keys(vv.by);
       if (isOpen(q)) { cur.unit = q.unit || ""; cur.tol = q.tol || 0; }
       if (stg.phase === "reveal") {
@@ -307,7 +308,7 @@ function build(d, { pid, host }) {
     v.host = { individuals: individuals(d), teamTotals: teamTotals(d), score: d.score, rubric: { say: C.SAY_RUBRIC, box: C.BOX_RUBRIC, boss: BOSS_Q.map(q => q[2]) }, max: { ...MAX, quiz: quizMaxTeam() },
       content: { say: SAY, boxes: BOXES, boss: { case: BOSS_CASE, qs: BOSS_Q, drop: DROP } }, customContent: !!d.content, customSetup: !!d.setup,
       notes: Object.fromEntries(Object.keys(d.sub).filter(k => k.startsWith("note:")).map(k => [k.slice(5), d.sub[k].text])),
-      rounds: ROUNDS, quiz: QUIZ.map(q => (d.imgv[q.id] ? { ...q, img: d.imgv[q.id] } : q)), customQuiz: !!d.quiz, says: SAY.map(s => s.id), rgTotal: revealedCount(d),
+      rounds: ROUNDS, quiz: QUIZ.map(q => { const x = { ...q }; if (d.imgv[q.id]) x.img = d.imgv[q.id]; if (d.filev[q.id]) x.file = d.filev[q.id]; return x; }), customQuiz: !!d.quiz, says: SAY.map(s => s.id), rgTotal: revealedCount(d),
       roundLens: Object.fromEntries(ORDER.map(r => [r, roundQs(r).length])) };
     if (stg.type === "rg" && cur && cur.qid) { const q = Q[cur.qid]; cur.a = q.a; cur.e = q.e; cur.d = q.d; cur.c = votesFor(d, q.id).c; }
   }
@@ -379,6 +380,18 @@ module.exports = async function handler(req, res) {
         await store.cmd("DEL", K.auth, K.devs); cache = null;
         return send(res, 200, { ok: true, message: "Authenticator removed. Sign in with the PIN, then delete HOST_RESET in Vercel." });
       }
+      const fileQ = url.searchParams.get("file");
+      if (fileQ) {
+        const raw = await store.cmd("HGET", K.files, String(fileQ));
+        if (!raw) { res.statusCode = 404; return res.end(); }
+        let x; try { x = JSON.parse(raw); } catch (e) { res.statusCode = 404; return res.end(); }
+        const buf = Buffer.from(x.d, "base64");
+        res.statusCode = 200;
+        res.setHeader("Content-Type", x.t || "application/octet-stream");
+        res.setHeader("Content-Disposition", 'inline; filename="' + String(x.n || "file").replace(/[^\w. -]/g, "_") + '"');
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        return res.end(buf);
+      }
       const imgQ = url.searchParams.get("img");
       if (imgQ) {
         const raw = await store.cmd("HGET", K.imgs, String(imgQ));
@@ -420,7 +433,7 @@ module.exports = async function handler(req, res) {
       if (stg.startsAt && now < stg.startsAt - 400) return send(res, 409, { ok: false, message: "Get ready…" });
       const q = roundQs(stg.round)[stg.idx || 0];
       if (!q || q.id !== b.qid) return send(res, 409, { ok: false, message: "That statement is over." });
-      if (q.type === "text") { b.v = clean(b.v, 1000); if (!b.v) return send(res, 400, { ok: false, message: "Write something first." }); }
+      if (q.type === "text") { b.v = clean(b.v, (SET.limits && SET.limits.text) || 1000); if (!b.v) return send(res, 400, { ok: false, message: "Write something first." }); }
       else if (q.type === "number") { if (b.v === "" || b.v == null || isNaN(Number(b.v))) return send(res, 400, { ok: false, message: "Write a number." }); b.v = String(Number(b.v)); }
       else if (!choices(q).includes(b.v)) return send(res, 409, { ok: false, message: "That statement is over." });
       let frac = 0;
@@ -478,8 +491,11 @@ module.exports = async function handler(req, res) {
       else if (op === "quizSave") {
         const list = sanitizeQuiz(b.quiz);
         await store.cmd("SET", K.quiz, JSON.stringify(list));
-        const keep = new Set(list.map(q => q.id)), gone = Object.keys(d.imgv).filter(id => !keep.has(id));
+        const keep = new Set(list.map(q => q.id));
+        const gone = Object.keys(d.imgv).filter(id => !keep.has(id));
         if (gone.length) await store.pipeline([["HDEL", K.imgs, ...gone], ["HDEL", K.imgv, ...gone]]);
+        const goneF = Object.keys(d.filev).filter(id => !keep.has(id));
+        if (goneF.length) await store.pipeline([["HDEL", K.files, ...goneF], ["HDEL", K.filev, ...goneF]]);
         cache = null; return send(res, 200, { ok: true, count: list.length });
       }
       else if (op === "contentSave") { const c = sanitizeContent(b.content); await store.cmd("SET", K.content, JSON.stringify(c)); cache = null; return send(res, 200, { ok: true }); }
@@ -523,6 +539,30 @@ module.exports = async function handler(req, res) {
         const others = Object.keys(all).filter(t => t !== b.tok);
         if (others.length) await store.cmd("HDEL", K.devs, ...others);
         return send(res, 200, { ok: true, removed: others.length });
+      }
+      else if (op === "fileSave") {
+        const qid = String(b.qid || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24);
+        const data = String(b.data || ""), name = clean(b.name, 80) || "file";
+        const m = /^data:([^;,]*);base64,([A-Za-z0-9+/=]+)$/.exec(data);
+        if (!qid || !m) return send(res, 400, { ok: false, message: "That file didn't work." });
+        if (m[2].length > 4200000) return send(res, 400, { ok: false, message: "That file is too big — keep it under 3 MB." });
+        const type = /^[\w.+-]+\/[\w.+-]+$/.test(m[1]) ? m[1] : "application/octet-stream";
+        const v = ((d.filev[qid] || {}).v || 0) + 1;
+        await store.pipeline([["HSET", K.files, qid, JSON.stringify({ t: type, n: name, d: m[2] })],
+                              ["HSET", K.filev, qid, JSON.stringify({ v, n: name, t: type, size: Math.round(m[2].length * 0.75) })]]);
+        cache = null; return send(res, 200, { ok: true, v });
+      }
+      else if (op === "fileDel") { await store.pipeline([["HDEL", K.files, String(b.qid)], ["HDEL", K.filev, String(b.qid)]]); cache = null; }
+      else if (op === "fileAll") { const all = toObj(await store.cmd("HGETALL", K.files)); return send(res, 200, { ok: true, files: parseJ(all) }); }
+      else if (op === "fileRestore") {
+        const fs2 = b.files || {}; const sets = [], vers = [];
+        for (const qid of Object.keys(fs2).slice(0, 40)) {
+          const x = fs2[qid]; if (!x || !x.d || String(x.d).length > 4200000) continue;
+          sets.push(qid, JSON.stringify({ t: x.t || "application/octet-stream", n: x.n || "file", d: x.d }));
+          vers.push(qid, JSON.stringify({ v: ((d.filev[qid] || {}).v || 0) + 1, n: x.n || "file", t: x.t, size: Math.round(String(x.d).length * 0.75) }));
+        }
+        if (sets.length) await store.pipeline([["HSET", K.files, ...sets], ["HSET", K.filev, ...vers]]);
+        cache = null;
       }
       else if (op === "imgDel") { await store.pipeline([["HDEL", K.imgs, String(b.qid)], ["HDEL", K.imgv, String(b.qid)]]); cache = null; }
       else if (op === "imgAll") { const all = toObj(await store.cmd("HGETALL", K.imgs)); return send(res, 200, { ok: true, images: parseJ(all) }); }
