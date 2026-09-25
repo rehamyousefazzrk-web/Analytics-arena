@@ -9,9 +9,13 @@ const ls = { get(k, d) { try { const v = localStorage.getItem(k); return v == nu
 let V = null, offset = 0, lastSig = "", lastDockSig = "", busy = false;
 let pid = ls.get("mc-pid", null);
 let pin = ls.get("mc-pin", null);
+let tok = ls.get("mc-tok", null);
+let authReady = false;
 (function () { // a trainer link like /host?k=2580 signs you in once, then the code disappears from the address bar
   try {
     const u = new URL(location.href), k = u.searchParams.get("k") || u.searchParams.get("pin");
+    const t = u.searchParams.get("t");
+    if (t) { tok = t; ls.set("mc-tok", t); u.searchParams.delete("t"); history.replaceState(null, "", u.pathname + u.search + u.hash); }
     if (k) { pin = k; ls.set("mc-pin", k); u.searchParams.delete("k"); u.searchParams.delete("pin"); history.replaceState(null, "", u.pathname + u.search + u.hash); }
   } catch (e) {}
 })();
@@ -28,17 +32,24 @@ async function api(method, body, qs = "") {
   return j;
 }
 async function refresh() {
-  if (ROLE === "host" && !pin) { if (triedOpen) return; triedOpen = true; pin = "none"; }  // try a password-free trainer page first
+  if (ROLE === "host" && !pin && !tok) { if (triedOpen) return; triedOpen = true; pin = "none"; }  // try a password-free trainer page first
   if (busy) return; busy = true;
   try {
-    const qs = ROLE === "host" ? "?pin=" + encodeURIComponent(pin || "") : ROLE === "player" && pid ? "?pid=" + encodeURIComponent(pid) : "";
+    const qs = ROLE === "host" ? (tok ? "?tok=" + encodeURIComponent(tok) : "?pin=" + encodeURIComponent(pin || "")) : ROLE === "player" && pid ? "?pid=" + encodeURIComponent(pid) : "";
     const j = await api("GET", null, qs);
     offset = j.now - Date.now(); V = j; hideError();
-    if (ROLE === "host" && pin) ls.set("mc-pin", pin);
+    if (ROLE === "host" && pin && !tok) ls.set("mc-pin", pin);
+    if (ROLE === "host") authReady = !!(V.auth && V.auth.ready);
     if (ROLE === "player" && pid && j.me === null) { pid = null; ls.set("mc-pid", null); }
     render();
   } catch (e) {
-    if (e.code === "pin") { pin = null; ls.set("mc-pin", null); if (!$("#f-pin")) renderPin(true); else { const er = $("#pinerr"); if (er) er.hidden = false; } }
+    if (e.code === "pin") {
+      const hadTok = !!tok, probe = pin === "none" && !hadTok; pin = null; tok = null; ls.set("mc-pin", null); ls.set("mc-tok", null);
+      try { const pub = await api("GET", null, ""); authReady = !!pub.authReady; } catch (x) {}
+      const right = authReady ? $("#f-code") : $("#f-pin");
+      if (!right) renderPin(probe ? false : hadTok ? "This device was signed out — sign in again." : true);
+      else if (!probe) { const er = $("#pinerr"); if (er) { er.hidden = false; er.textContent = authReady ? "Wrong code — try again." : "Wrong PIN — try again."; } }
+    }
     else showError(e.code === "db" ? e.message : "Reconnecting…");
   } finally { busy = false; }
 }
@@ -47,9 +58,15 @@ async function post(body, okMsg) {
   try { await api("POST", body); if (okMsg) toast(okMsg); lastSig = ""; lastDockSig = ""; await refresh(); return true; }
   catch (e) { toast(e.message || "Something went wrong"); return false; }
 }
-const host = (op, extra = {}) => post({ a: "host", pin, op, ...extra });
+const host = (op, extra = {}, okMsg) => post({ a: "host", pin, tok, op, ...extra }, okMsg);
 
 /* ---------------- ui bits ---------------- */
+function deviceName() {
+  const u = navigator.userAgent;
+  const os = /iPhone|iPad/.test(u) ? "iPhone/iPad" : /Android/.test(u) ? "Android" : /Mac OS X/.test(u) ? "Mac" : /Windows/.test(u) ? "Windows" : "Device";
+  const br = /Edg\//.test(u) ? "Edge" : /OPR\//.test(u) ? "Opera" : /Chrome\//.test(u) ? "Chrome" : /Safari\//.test(u) ? "Safari" : /Firefox\//.test(u) ? "Firefox" : "Browser";
+  return os + " · " + br;
+}
 function toast(m) { const d = document.createElement("div"); d.className = "toast"; d.textContent = m; document.body.appendChild(d); setTimeout(() => d.remove(), 2200); }
 function showError(m) { let e = $("#neterr"); if (!e) { e = document.createElement("div"); e.id = "neterr"; e.className = "toast"; e.style.background = "var(--red)"; e.style.color = "#fff"; document.body.appendChild(e); } e.textContent = m; }
 function hideError() { const e = $("#neterr"); if (e) e.remove(); }
@@ -191,6 +208,10 @@ function applyBrand() {
   if (st.logo) { let l = document.querySelector("link[rel=icon]"); if (!l) { l = document.createElement("link"); l.rel = "icon"; document.head.appendChild(l); } l.href = st.logo; }
 }
 const flagOf = k => { const f = SETUP().flag || {}; const x = f[k] || {}; return { label: x.label || (k === "R" ? "Red flag" : "Green flag"), emoji: x.emoji || (k === "R" ? "\u{1F6A9}" : "\u2705") }; };
+const imgURL = c => "/api/game?img=" + encodeURIComponent(c.qid || c.id) + "&v=" + c.img;
+const qImg = (c, cls) => !c || !c.img ? "" : cls === "ph"
+  ? `<div class="qimgwrap"><img class="qimg ph" src="${imgURL(c)}" alt="" data-act="zoom" data-u="${imgURL(c)}"><button class="zoomhint" data-act="zoom" data-u="${imgURL(c)}">🔍 Tap to open full size</button></div>`
+  : `<img class="qimg ${cls || ""}" src="${imgURL(c)}" alt="">`;
 const SHAPES = { A: "▲", B: "◆", C: "●", D: "■" };
 function ansLabel(c) { if (c.type === "number") return `${esc(c.a)}${c.unit ? " " + esc(c.unit) : ""}${c.tol ? " (±" + c.tol + ")" : ""}`; if (c.type === "text") return "open answer"; if (c.type !== "rg") { const i = "ABCD".indexOf(c.a); return `${SHAPES[c.a]} ${c.a}) ${esc(c.opts[i])}`; } const f = flagOf(c.a); return `${f.emoji} ${esc(f.label)}`; }
 const ptsTxt = n => n + (n > 1 ? " points" : " point");
@@ -251,6 +272,7 @@ function renderPlayer() {
       const cls = poll || (txt && !me.right) ? "none" : !me.vote ? "none" : me.right ? "ok" : "no";
       body = `<div class="splash ${cls}"><div class="disp">${poll ? "Thanks!" : txt && !me.right ? "Answer sent" : !me.vote ? "No vote" : me.right ? "Correct!" : "Not this time"}</div>
         <p>${poll ? "Results are on the screen." : cur.team ? (me.right ? "+" + me.gain + " points for " + tname(me.team).replace(/<[^>]*>/g, "") : me.vote ? "Your team missed this one" : "Your team didn't answer") : me.right ? "+" + nfmt(me.gain) + " points" + (me.gain > cur.pts * SETUP().scoring.base ? " ⚡ speed bonus" : "") : !me.vote ? "You didn't vote on this one." : txt ? "Answers are on the screen 👀" : "Listen to the explanation 👀"}</p></div>
+        ${qImg(cur, "ph")}
         ${poll || txt ? (cur.e ? `<div class="pcard"><p style="margin:0;font-size:18px">${esc(cur.e)}</p></div>` : "") : `<div class="pcard"><div class="eyebrow">Answer</div><p style="margin:4px 0 0;font-weight:700;font-size:18px">${ansLabel(cur)}</p><p style="margin:8px 0 0;font-size:18px">${esc(cur.e)}</p></div>`}
         <div class="stats3"><div><span class="eyebrow">Correct</span><b>${me.correct}/${me.qCount}</b></div><div><span class="eyebrow">Points</span><b>${nfmt(me.arena)}</b></div><div><span class="eyebrow">Rank</span><b>#${me.rank}</b></div></div>`;
       if (lastResultQ !== cur.qid) { lastResultQ = cur.qid; if (me.right) { confetti(90); navigator.vibrate && navigator.vibrate(60); } else if (me.vote) navigator.vibrate && navigator.vibrate([40, 60, 40]); }
@@ -267,7 +289,7 @@ function renderPlayer() {
       const btns = open
         ? (cur.type === "number"
           ? `<div class="field"><input class="input big" id="f-ans" type="number" step="any" inputmode="decimal" data-draft="${dkey}" value="${esc(draft(dkey, me.vote))}" placeholder="Your number${cur.unit ? " (" + esc(cur.unit) + ")" : ""}" ${closed ? "disabled" : ""}></div>`
-          : `<div class="field"><textarea class="input" id="f-ans" data-draft="${dkey}" dir="auto" maxlength="300" placeholder="Your answer…" ${closed ? "disabled" : ""}>${esc(draft(dkey, me.vote))}</textarea></div>`)
+          : `<div class="field"><textarea class="input" id="f-ans" data-draft="${dkey}" dir="auto" maxlength="1000" placeholder="Your answer…" ${closed ? "disabled" : ""}>${esc(draft(dkey, me.vote))}</textarea><div class="counter"><span id="ansCount">${(draft(dkey, me.vote) || "").length}</span> / 1000</div></div>`)
           + `<button class="btn red cta" style="margin-top:10px" data-act="sendAns" ${closed ? "disabled" : ""}>${me.vote ? "Update my answer" : "Send my answer"}</button>
              ${me.vote ? `<p class="saved">✓ Sent${isTeam && ta ? " by " + esc(ta.by) + " — anyone in the team can edit" : " — you can still change it"}</p>` : ""}`
         : cur.type !== "rg"
@@ -277,7 +299,7 @@ function renderPlayer() {
           <button class="vote g ${onoff("G")}" data-act="vote" data-v="G" ${closed ? "disabled" : ""}>${flagOf("G").emoji} ${esc(flagOf("G").label)}</button>
         </div>`;
       body = `<div class="eyebrow">${esc(cur.roundName)} · ${cur.idx + 1}/${cur.total}${cur.pts > 1 ? " · " + ptsTxt(cur.pts) : ""}</div>
-        ${teamBar}<p class="pstatement">${esc(cur.t)}</p>${tbar(stg)}
+        ${teamBar}<p class="pstatement">${esc(cur.t)}</p>${qImg(cur, "ph")}${tbar(stg)}
         ${btns}
         ${open ? "" : `<p class="lock">${closed ? "⏰ Time's up" : isTeam ? (me.vote ? "Anyone in the team can still change it" : "Tap the answer for your team") : me.vote ? "🔒 Locked in — tap the other one to change" : "Tap your answer"}</p>`}`;
     }
@@ -402,6 +424,13 @@ async function playerAct(a, d) {
     try { const j = await api("POST", { a: "join", name, team: join.team, emoji: join.emoji, pid }); pid = j.pid; editing = false; ls.set("mc-pid", pid); ls.set("mc-name", name); lastSig = ""; await refresh(); }
     catch (e) { toast(e.message); }
   }
+  else if (a === "zoom") {
+    const w = document.createElement("div"); w.className = "lightbox";
+    w.innerHTML = `<div class="lbbar"><a class="btn sm" href="${d.u}" target="_blank" rel="noopener">⤓ Open / save</a><button class="btn sm primary" data-act="closeZoom">Close ✕</button></div><img src="${d.u}" alt="">`;
+    w.addEventListener("click", e => { if (e.target === w || e.target.closest("[data-act=closeZoom]")) w.remove(); });
+    document.body.appendChild(w);
+  }
+  else if (a === "closeZoom") { const w = $(".lightbox"); w && w.remove(); }
   else if (a === "rejoin") { join.team = V.me.team; join.emoji = V.me.emoji; drafts["join:name"] = V.me.name; editing = true; lastSig = ""; render(); }
   else if (a === "vote") { if (navigator.vibrate) navigator.vibrate(25); V.me.vote = d.v; lastSig = ""; renderPlayer(); await post({ a: "vote", pid, qid: V.cur.qid, v: d.v }); }
   else if (a === "sendAns") {
@@ -470,7 +499,8 @@ function screenHTML() {
       ? `<div class="sopts">${c.opts.map((o, i) => { const k = "ABCD"[i]; return `<div class="sopt o${k} ${rev && c.a ? (c.a === k ? "win" : "lose") : ""}"><span class="sh">${SHAPES[k]}</span><span class="tx">${esc(o)}</span>${rev ? `<span class="pc">${pct(k)}%</span>` : ""}</div>`; }).join("")}</div>`
       : `<div class="flags">${["R", "G"].map(k => `<div class="flag ${k.toLowerCase()} ${rev && c.a ? (c.a === k ? "win" : "lose") : ""}"><div style="flex:1"><div class="disp">${flagOf(k).emoji} ${esc(flagOf(k).label)}</div>${rev ? `<div class="vbar"><i style="width:${pct(k)}%"></i></div>` : ""}</div>${rev ? `<div class="pct">${pct(k)}%</div>` : ""}</div>`).join("")}</div>`;
     h = `<div class="row"><div class="eyebrow">${esc(c.roundName)} · ${esc(c.level)} · ${c.idx + 1}/${c.total}${c.team ? " · 👥 team answer" : ""}${c.pts > 1 ? " · " + ptsTxt(c.pts) : ""}</div><div class="spacer"></div>${c.mic && rev ? `<div class="mic">🎤 ${esc(c.mic.emoji)} ${esc(c.mic.name)}</div>` : ""}</div>
-      <p class="big-statement ${c.type !== "rg" ? "q" : ""}">${esc(c.t)}</p>
+      <p class="big-statement ${c.type !== "rg" ? "q" : ""} ${c.img ? "withimg" : ""}">${esc(c.t)}</p>
+      ${qImg(c, "sc")}
       ${(openQ || isTeamQ) && !rev ? `<div class="meta">${ring(s, true)}<div><div class="voted mono">${c.voted}/${c.of}</div><div class="eyebrow">${isTeamQ ? "teams in" : "answered"}</div></div></div>` : ""}
       ${choicesHTML}
       ${rev && (c.e || c.d) ? `<div class="explain ${c.d ? "" : "one"}"><div><div class="eyebrow">${c.type === "poll" ? "Note" : "Why"}</div><p>${esc(c.e)}</p></div>${c.d ? `<div class="disc"><div class="eyebrow">Discuss</div><p>${esc(c.d)}</p></div>` : ""}</div>`
@@ -592,14 +622,24 @@ function navGroups() {
 function sections() { return navGroups().flatMap(g => g[1]); }
 let dockMin = ls.get("mc-dockmin", false);
 function renderPin(bad) {
-  $("#app").innerHTML = `<div class="pinwrap"><div class="pcard" style="max-width:420px;width:100%">${brandHTML("Trainer")}
-    <h2 class="disp bigtitle">Host PIN</h2><p class="muted">The PIN you set in Vercel (HOST_PIN). Default is 1234. This device remembers it, so you type it once.</p>
-    <input class="input" id="f-pin" type="password" inputmode="numeric" autocomplete="off" style="margin-top:10px">
-    <p class="err" id="pinerr" style="margin-top:10px" ${bad ? "" : "hidden"}>Wrong PIN — try again.</p><button class="btn red cta" style="margin-top:14px" data-act="pin">Enter</button></div></div>`;
-  setTimeout(() => $("#f-pin") && $("#f-pin").focus(), 50);
+  const msg = typeof bad === "string" ? bad : bad ? "Wrong code — try again." : "";
+  $("#app").innerHTML = `<div class="pinwrap"><div class="pcard" style="max-width:430px;width:100%">${brandHTML("Trainer")}
+    ${authReady
+      ? `<h2 class="disp bigtitle">Sign in</h2><p class="muted">Open your authenticator app and type the 6-digit code for this game.</p>
+         <input class="input big" id="f-code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="000000" style="margin-top:12px">
+         <p class="err" id="pinerr" style="margin-top:10px" ${msg ? "" : "hidden"}>${esc(msg)}</p>
+         <button class="btn red cta" style="margin-top:14px" data-act="signin">Sign in</button>
+         <p class="muted small" style="margin-top:12px">This device stays signed in until you remove it from 🔐 Security.</p>
+         <button class="btn sm ghost" style="margin-top:8px" data-act="usePin">Use the PIN instead</button>`
+      : `<h2 class="disp bigtitle">Host PIN</h2><p class="muted">The PIN you set in Vercel (HOST_PIN). Default is 1234. This device remembers it, so you type it once.</p>
+         <input class="input" id="f-pin" type="password" inputmode="numeric" autocomplete="off" style="margin-top:10px">
+         <p class="err" id="pinerr" style="margin-top:10px" ${msg ? "" : "hidden"}>${esc(msg)}</p>
+         <button class="btn red cta" style="margin-top:14px" data-act="pin">Enter</button>`}
+    </div></div>`;
+  setTimeout(() => { const el = $("#f-code") || $("#f-pin"); el && el.focus(); }, 50);
 }
 function renderHost() {
-  if (!pin) return renderPin(false);
+  if (!pin && !tok) return renderPin(false);
   let root = $("#hostStage"), dock = $("#dock");
   if (!root) { $("#app").innerHTML = `<div id="hostStage"></div><div id="dock" class="dock"></div>`; root = $("#hostStage"); dock = $("#dock"); lastSig = ""; lastDockSig = ""; }
   renderScreen(root);
@@ -616,12 +656,12 @@ function dockHTML() {
   const navBtns = navGroups().map(([g, items]) => `<div class="navg ${g ? "lab" : ""}">${g ? `<span class="gl">${g}</span>` : ""}${items.map(([k, l]) => `<button class="${curSection() === k ? "on" : ""}" data-act="go" data-k="${k}">${l}</button>`).join("")}</div>`).join("");
   const nav = `<div class="dock-top"><span class="lbl">Trainer</span><div class="nav">${navBtns}</div><div class="spacer"></div>
     <button class="btn sm" data-act="timerAdd">+30s</button><button class="btn sm" data-act="timerStop">Stop timer</button><button class="btn sm" data-act="scores">🔒 Private scores</button><button class="btn sm" data-act="edOpen">✏️ Content</button><button class="btn sm ${V.timer ? "amber" : ""}" data-act="timerOpen">⏱ Big timer</button>
-    <button class="btn sm" data-act="hostLink" title="Copy a link that opens this page with no password">🔗 My link</button><button class="btn sm ${soundOn ? "amber" : ""}" data-act="sound">${soundOn ? "🔊" : "🔇"}</button><button class="btn sm" data-act="min" title="P">${dockMin ? "▲ Show" : "▼ Hide"} <span class="kbd">P</span></button></div>`;
+    <button class="btn sm" data-act="security" title="Authenticator app and signed-in devices">🔐 Security</button><button class="btn sm" data-act="hostLink" title="Copy a link that opens this page with no password">🔗 My link</button><button class="btn sm ${soundOn ? "amber" : ""}" data-act="sound">${soundOn ? "🔊" : "🔇"}</button><button class="btn sm" data-act="min" title="P">${dockMin ? "▲ Show" : "▼ Hide"} <span class="kbd">P</span></button></div>`;
   let b = "";
   if (s.type === "lobby") {
     b = `<div class="ctx"><span class="info">Players join at <b>${esc(location.origin)}</b> · ${V.players.length} joined</span></div>
       <div class="ctx"><b>Number of teams</b>${[4,5,6,7,8,9,10].map(n => `<button class="btn sm ${V.teams.length === n ? "amber" : ""}" data-act="teamCount" data-n="${n}">${n}</button>`).join("")}<span class="info">${V.players.length} players → about ${Math.ceil(V.players.length / V.teams.length) || 0} per team</span></div>
-      <div class="ctx">${V.teams.map((t, i) => `<input class="hinput" id="tn-${t.id}" value="${esc(t.name)}" aria-label="Team ${i + 1} name" style="width:130px">`).join("")}<button class="btn sm" data-act="saveTeams">Save team names</button>
+      <div class="ctx">${V.teams.map((t, i) => `<input class="hinput" id="tn-${t.id}" value="${esc(t.name)}" aria-label="Team ${i + 1} name" style="width:130px">`).join("")}<button class="btn sm" data-act="saveTeams">Save team names</button><button class="btn sm" data-act="balance">🔀 Balance teams</button>
       <div class="spacer"></div><button class="btn sm ghost" data-act="resetScores">Reset scores</button><button class="btn sm ghost" data-act="resetAll">Reset everything</button></div>
       <div style="overflow-x:auto"><table class="htable"><tbody>${V.players.map(p => `<tr><td>${esc(p.emoji)} ${esc(p.name)}</td><td>${V.teams.map(t => `<button class="btn sm ${p.team === t.id ? "amber" : "ghost"}" data-act="move" data-p="${p.id}" data-t="${t.id}">${esc(t.name)}</button>`).join(" ")}</td><td><button class="btn sm ghost" data-act="kick" data-p="${p.id}">Remove</button></td></tr>`).join("")}</tbody></table></div>
       <div class="ctx"><button class="btn red" data-act="go" data-k="rg:1">Start Red/Green Round 1 ▶</button></div>`;
@@ -673,6 +713,37 @@ function dockHTML() {
       <span class="info">Best players = correct answers + speed. Full 100-point sheet is in 🔒 Private scores.</span></div>`;
   }
   return nav + `<div class="dock-body">${b}</div>`;
+}
+function secModal(data) {
+  let m = $("#secModal");
+  if (!m) { m = document.createElement("div"); m.className = "modal"; m.id = "secModal"; document.body.appendChild(m); }
+  const ready = V.auth && V.auth.ready;
+  const when = t => { if (!t) return ""; const d = new Date(t); return d.toLocaleDateString() + " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }); };
+  const body = !ready
+    ? `<p class="muted">Right now the trainer page opens with the PIN. Set up an authenticator app (Google Authenticator, Microsoft Authenticator, Authy…) and the PIN can be switched off — the code changes every 30 seconds, so nothing useful stays written down.</p>
+       ${data && data.uri ? `<div class="setup2fa"><div id="totpqr" class="qrbox"></div>
+         <div><div class="eyebrow">1 — scan this with the app</div>
+           <p class="muted small">Can't scan? Add it by hand with this key:</p><div class="seckey mono">${esc((data.secret || "").replace(/(.{4})/g, "$1 ").trim())}</div>
+           <div class="eyebrow" style="margin-top:12px">2 — type the 6-digit code it shows</div>
+           <div class="row"><input class="hinput" id="f-2fa" inputmode="numeric" maxlength="6" placeholder="000000" style="width:120px"><button class="btn red" data-act="secConfirm">Turn it on</button></div></div></div>`
+         : `<button class="btn red cta" style="margin-top:12px" data-act="secStart">🔐 Set up an authenticator app</button>`}`
+    : `<div class="row"><span class="chip">✓ Authenticator app is on</span>
+         <button class="btn sm ${V.auth.pinOff ? "amber" : ""}" data-act="secPin" data-off="${V.auth.pinOff ? "0" : "1"}" title="${V.auth.pinOff ? "" : "Locked out later? Add HOST_RESET in Vercel and open /api/game?reset=your-value"}">${V.auth.pinOff ? "PIN is off — turn it back on" : "Turn the PIN off (app only)"}</button>
+         <div class="spacer"></div><button class="btn sm ghost" data-act="secOff">Remove the app</button></div>
+       <p class="muted small" style="margin:8px 0 12px">${V.auth.pinOff ? "Only a 6-digit code from the app can sign in. Keep one device signed in so you're never locked out." : "The PIN still works as a backup. Turn it off once the app is working on your phone."}</p>
+       <div class="eyebrow">Signed-in devices</div>
+       <div class="devlist">${(data && data.devices || []).map(x => `<div class="dev ${x.me ? "me" : ""}"><b>${esc(x.name)}${x.me ? " · this device" : ""}</b><span class="mono">${esc(x.id)}</span><span class="muted small">added ${when(x.created)} · last seen ${when(x.last)}</span>${x.me ? "" : `<button class="btn sm ghost" data-act="devRevoke" data-t="${x.tok}">Remove</button>`}</div>`).join("") || `<p class="muted">No devices yet.</p>`}</div>
+       <div class="row" style="margin-top:10px"><button class="btn sm ghost" data-act="devRevokeAll">Sign out every other device</button></div>`;
+  m.innerHTML = `<div class="in" style="max-width:720px"><div class="row"><h2 class="disp sh2" style="margin:0;font-size:30px">🔐 Security</h2><div class="spacer"></div><button class="btn sm primary" data-act="secClose">Close</button></div>${body}</div>`;
+  if (data && data.uri) { const el = $("#totpqr"); if (el) { el.innerHTML = ""; let done = false;
+    if (window.QRCode) { try { new QRCode(el, { text: data.uri, width: 190, height: 190, colorDark: "#0B2238", colorLight: "#ffffff" }); done = true; } catch (e) {} }
+    if (!done) el.innerHTML = `<p class="muted small" style="color:#0B2238;max-width:180px;line-height:1.35">The QR code couldn't load. Add it in the app by hand with the key on the right — pick <b>"Enter a setup key"</b>, any account name, type set to <b>Time based</b>.</p>`; } }
+  setTimeout(() => { const f = $("#f-2fa"); f && f.focus(); }, 60);
+}
+async function secOpen(extra) {
+  let data = extra || {};
+  if (V.auth && V.auth.ready) { try { const r = await api("POST", { a: "host", pin, tok, op: "devList" }); data = { devices: r.devices }; } catch (e) {} }
+  secModal(data);
 }
 function scoresModal() {
   const H = V.host; const rows = H.individuals.slice().sort((a, b) => b.total - a.total);
@@ -875,6 +946,10 @@ function renderEditor() {
       : q.type === "text" ? `<p class="muted small" style="margin:6px 0">${q.team ? "Each team sends one written answer. After Reveal you give each team 0 to ${q.pts || 1} points from the trainer bar." : "Everyone writes their own answer. After Reveal you give each one 0 to ${q.pts || 1} points from the trainer bar."}</p>`
       : q.type === "number" ? `<div class="s3">${fld("Right number", "a", q.a, { num: 1 }).replace(/data-cf=/g, 'data-ef=').replace('data-ef="a"', 'data-ef="a" data-i="' + i + '"')}${fld("Accepted ± ", "tol", q.tol || 0, { num: 1 }).replace(/data-cf=/g, 'data-ef=').replace('data-ef="tol"', 'data-ef="tol" data-i="' + i + '"')}${fld("Unit (optional)", "unit", q.unit || "", { ph: "%" }).replace(/data-cf=/g, 'data-ef=').replace('data-ef="unit"', 'data-ef="unit" data-i="' + i + '"')}</div>`
       : `<label class="eyebrow">Correct answer</label><div class="row"><button class="btn sm ${q.a === "R" ? "red-on" : "ghost"}" data-act="edAns" data-i="${i}" data-v="R">${flagOf("R").emoji} ${esc(flagOf("R").label)}</button><button class="btn sm ${q.a === "G" ? "green-on" : "ghost"}" data-act="edAns" data-i="${i}" data-v="G">${flagOf("G").emoji} ${esc(flagOf("G").label)}</button></div>`}
+    <div class="imgrow">${q.img ? `<img class="thumb" src="/api/game?img=${encodeURIComponent(q.id)}&v=${q.img}" alt="">` : `<span class="muted small">No picture</span>`}
+      <button class="btn sm" data-act="edImg" data-i="${i}">${q.img ? "Change picture" : "🖼 Add a picture"}</button>
+      ${q.img ? `<button class="btn sm ghost" data-act="edImgDel" data-i="${i}">Remove</button>` : ""}
+      <span class="muted small">A screenshot, a chart, a case study page — shown on the big screen and on the phones.</span></div>
     <label class="eyebrow">${q.type === "poll" ? "Comment shown after the results (optional)" : "Why — shown after reveal"}</label>
     <textarea class="hinput" rows="2" data-ef="e" data-i="${i}" dir="auto">${esc(q.e || "")}</textarea>
     <label class="eyebrow">Discussion prompt (optional)</label>
@@ -893,11 +968,13 @@ function renderEditor() {
     <p class="muted small" style="margin:8px 0 12px">Changes go live for everyone as soon as you save — no GitHub needed. Answers already given are kept.</p>
     <div class="nav big">${[["ind", "👤 Individual questions"], ["group", "👥 Group games"], ["setup", "⚙️ Session setup"]].map(([k, l]) => `<button class="${edTab === k ? "on" : ""}" data-act="edTab" data-t="${k}">${l}</button>`).join("")}</div>
     <div style="margin-top:12px">${edTab === "ind" ? indBody : edTab === "group" ? groupHTML() : setupHTML()}</div>
-    <div class="row" style="margin-top:14px"><div class="spacer"></div><button class="btn red" data-act="edSave">💾 Save changes</button></div></div>`;
+    <div class="row" style="margin-top:14px"><div class="spacer"></div><button class="btn red" data-act="edSave">💾 Save changes</button></div>
+    <input type="file" id="edImgFile" accept="image/*" hidden></div>`;
   m.scrollTop = scroll;
 }
 document.addEventListener("input", e => {
   const el = e.target;
+  if (el.id === "f-ans") { const c = $("#ansCount"); if (c) c.textContent = el.value.length; }
   if (EDS && el.dataset.cs) {
     const path = el.dataset.cs;
     if (path === "emojisText") EDS.emojis = [...el.value.replace(/[\s,]+/gu, " ").trim()].length ? splitEmojis(el.value) : [];
@@ -921,8 +998,31 @@ document.addEventListener("input", e => {
 });
 
 /* ---- session setup: logo upload + import/export file ---- */
+let imgFor = null;
 document.addEventListener("change", e => {
   const el = e.target;
+  if (el.id === "edImgFile" && el.files && el.files[0]) {
+    const idx = el.dataset.i != null ? +el.dataset.i : imgFor;
+    const file = el.files[0], q = ED && ED[idx];
+    el.value = "";
+    if (!q || !q.id) return toast("Save the question first, then add the picture");
+    if (file.size > 25e6) return toast("That image is too big");
+    const img = new Image(), url = URL.createObjectURL(file);
+    img.onload = async () => {
+      const max = 1400, sc = Math.min(1, max / Math.max(img.width, img.height));
+      const cv = document.createElement("canvas"); cv.width = Math.round(img.width * sc); cv.height = Math.round(img.height * sc);
+      const cx = cv.getContext("2d"); cx.fillStyle = "#fff"; cx.fillRect(0, 0, cv.width, cv.height); cx.drawImage(img, 0, 0, cv.width, cv.height);
+      URL.revokeObjectURL(url);
+      let data = cv.toDataURL("image/jpeg", .82);
+      if (data.length > 1150000) data = cv.toDataURL("image/jpeg", .6);
+      if (data.length > 1150000) return toast("That image is too heavy — try a smaller one");
+      const ok = await host("imgSave", { qid: q.id, data });
+      if (ok) { await refresh(); ED = clone(V.host.quiz); edOrig = JSON.stringify([ED, EDC, EDS]); renderEditor(); toast("Picture added ✓"); }
+    };
+    img.onerror = () => toast("Couldn't read that image");
+    img.src = url;
+    return;
+  }
   if (el.id === "edLogoFile" && el.files && el.files[0]) {
     const f = el.files[0];
     if (f.size > 8e6) return toast("That image is too big — under 8 MB please");
@@ -952,6 +1052,7 @@ document.addEventListener("change", e => {
         const a2 = a1 && await host("quizSave", { quiz: ED });
         const a3 = a2 && p.content ? await host("contentSave", { content: EDC }) : a2;
         if (!a3) return;
+        if (p.images && Object.keys(p.images).length) await host("imgRestore", { images: p.images });
         await refresh();
         ED = clone(V.host.quiz); EDC = clone(V.host.content); EDS = clone(V.setup);
         edOrig = JSON.stringify([ED, EDC, EDS]); edRound = (EDS.rounds[0] || {}).key || edRound; edTab = "setup";
@@ -1023,6 +1124,11 @@ function goSection(k) {
 async function hostAct(a, d) {
   const s = V && V.stage;
   switch (a) {
+    case "signin": {
+      const code = ($("#f-code") || {}).value || "";
+      try { const r = await api("POST", { a: "signin", code, name: deviceName() }); tok = r.tok; ls.set("mc-tok", tok); pin = null; ls.set("mc-pin", null); $("#app").innerHTML = ""; lastSig = ""; lastDockSig = ""; return refresh(); }
+      catch (e) { const er = $("#pinerr"); if (er) { er.hidden = false; er.textContent = e.message || "Wrong code"; } return; }
+    }
     case "pin": pin = $("#f-pin").value.trim(); ls.set("mc-pin", pin); $("#app").innerHTML = ""; lastSig = ""; lastDockSig = ""; return refresh();
     case "go": return goSection(d.k);
     case "edOpen": return edOpen();
@@ -1041,11 +1147,22 @@ async function hostAct(a, d) {
       await host(edTab === "ind" ? "quizReset" : edTab === "group" ? "contentReset" : "setupReset");
       await refresh(); ED = clone(V.host.quiz); EDC = clone(V.host.content); EDS = clone(V.setup); edOrig = JSON.stringify([ED, EDC, EDS]); brandSig = ""; applyBrand(); renderEditor(); toast("Original content restored"); return; }
     case "edExport": {
-      const pack = { app: "analytics-arena", version: 1, exported: new Date().toISOString(), setup: EDS, quiz: ED, content: EDC };
+      let images = {};
+      try { const r = await api("POST", { a: "host", pin, op: "imgAll" }); images = r.images || {}; } catch (e) {}
+      const pack = { app: "analytics-arena", version: 1, exported: new Date().toISOString(), setup: EDS, quiz: ED, content: EDC, images };
       const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(pack, null, 2)], { type: "application/json" }));
       a.download = (EDS.name || "session").toLowerCase().replace(/[^a-z0-9]+/g, "-") + ".arena.json"; document.body.appendChild(a); a.click(); a.remove();
       return toast("Session file downloaded"); }
     case "edImport": { const f = $("#edFile"); f && f.click(); return; }
+    case "edImg": {
+      const q = ED[+d.i];
+      if (!q.id) { const ok = await host("quizSave", { quiz: ED }); if (!ok) return; await refresh(); ED = clone(V.host.quiz); EDC = clone(V.host.content); EDS = clone(V.setup); edOrig = JSON.stringify([ED, EDC, EDS]); renderEditor(); toast("Questions saved first — now pick the picture"); }
+      const f = $("#edImgFile"); if (!f) return; f.dataset.i = d.i; imgFor = +d.i; f.click(); return; }
+    case "edImgDel": {
+      const q = ED[+d.i]; if (!q || !q.id) return;
+      if (!confirm("Remove the picture from this question?")) return;
+      await host("imgDel", { qid: q.id }); await refresh();
+      ED = clone(V.host.quiz); edOrig = JSON.stringify([ED, EDC, EDS]); renderEditor(); return; }
     case "edLogo": { const f = $("#edLogoFile"); f && f.click(); return; }
     case "edLogoClear": { EDS.logo = ""; return renderEditor(); }
     case "edRound": case "edType": case "edPts": case "edAns": case "edDel": case "edMove": case "edAdd":
@@ -1059,17 +1176,36 @@ async function hostAct(a, d) {
     case "timerAdd": return host("timer", { dur: 30, add: true });
     case "timerStop": return host("timer", { dur: 0 });
     case "hostLink": {
-      const link = location.origin + "/host?k=" + encodeURIComponent(pin || "");
-      try { await navigator.clipboard.writeText(link); toast("Trainer link copied — bookmark it and you'll never type the PIN again"); }
+      const link = location.origin + "/host?" + (tok ? "t=" + encodeURIComponent(tok) : "k=" + encodeURIComponent(pin || ""));
+      try { await navigator.clipboard.writeText(link); toast(tok ? "Trainer link copied — it signs this browser in as a remembered device" : "Trainer link copied — bookmark it and you'll never type the PIN again"); }
       catch (e) { prompt("Copy this link and bookmark it:", link); }
       return; }
     case "award": { await host("score", { scores: { ["txt:" + d.q + ":" + d.p]: +d.v } }); return; }
     case "awardT": { await host("score", { scores: { ["tq:" + d.q + ":" + d.t]: +d.v } }); return; }
+    case "security": return secOpen();
+    case "secClose": { const m = $("#secModal"); m && m.remove(); return; }
+    case "secStart": { try { const r = await api("POST", { a: "host", pin, tok, op: "authSetup" }); return secModal(r); } catch (e) { return toast(e.message); } }
+    case "secConfirm": {
+      const code = ($("#f-2fa") || {}).value || "";
+      try {
+        const r = await api("POST", { a: "host", pin, tok, op: "authConfirm", code, name: deviceName() });
+        tok = r.tok; ls.set("mc-tok", tok); await refresh(); authReady = true;
+        toast("Authenticator app is on ✓"); return secOpen();
+      } catch (e) { return toast(e.message); }
+    }
+    case "secPin": {
+      if (d.off === "1" && !confirm("Turn the PIN off? After this only a 6-digit code from the app can sign in.\n\nIf you ever lose the app AND every signed-in device, add HOST_RESET in Vercel and open /api/game?reset=your-value to get back in.")) return;
+      await host("authPin", { off: d.off === "1" }); await refresh(); return secOpen(); }
+    case "secOff": { if (!confirm("Remove the authenticator app and go back to the PIN? Every signed-in device will be signed out.")) return; await host("authOff"); tok = null; ls.set("mc-tok", null); authReady = false; const m = $("#secModal"); m && m.remove(); lastSig = ""; lastDockSig = ""; return refresh(); }
+    case "devRevoke": { if (!confirm("Sign this device out?")) return; await host("devRevoke", { tok: d.t }); return secOpen(); }
+    case "devRevokeAll": { if (!confirm("Sign out every device except this one?")) return; await host("devRevokeAll", { tok }); return secOpen(); }
+    case "usePin": { authReady = false; return renderPin(false); }
     case "scores": return scoresModal();
     case "closeModal": { const m = $("#scoresModal"); m && m.remove(); return; }
     case "csv": return csv();
     case "score": { await host("score", { scores: { [d.f]: +d.v } }); if ($("#scoresModal")) scoresModal(); return; }
     case "teamCount": if (+d.n !== V.teams.length && (!V.players.length || confirm("Change to " + d.n + " teams? Players on removed teams get moved to the remaining ones."))) return host("teamCount", { n: +d.n }); return;
+    case "balance": if (!V.players.length) return toast("Nobody has joined yet"); if (confirm("Spread everyone evenly across the " + V.teams.length + " teams? People who picked a team will be moved.")) return host("balance", {}, "Teams balanced ✓"); return;
     case "saveTeams": return host("teams", { teams: V.teams.map(t => ({ id: t.id, name: ($("#tn-" + t.id) || {}).value })) });
     case "move": return host("move", { pid: d.p, team: d.t });
     case "kick": if (confirm("Remove this player?")) return host("kick", { pid: d.p }); return;
@@ -1119,6 +1255,8 @@ document.addEventListener("click", e => {
 });
 document.addEventListener("keydown", e => {
   if (e.key === "Enter" && e.target.id === "f-pin") return hostAct("pin", {});
+  if (e.key === "Enter" && e.target.id === "f-code") return hostAct("signin", {});
+  if (e.key === "Enter" && e.target.id === "f-2fa") return hostAct("secConfirm", {});
   if (e.key === "Enter" && e.target.id === "f-name") return playerAct("join", {});
   if (ROLE !== "host" || typing() || !V) return;
   if ($("#qEditor") && e.key !== "Escape") return;
@@ -1130,6 +1268,8 @@ document.addEventListener("keydown", e => {
   }
   if (e.key === "Escape") { if ($("#qEditor")) hostAct("edClose", {}); else hostAct("closeModal", {}); }
 });
-if (ROLE === "host" && !pin) renderPin(false);
+if (ROLE === "host" && !pin && !tok) {
+  api("GET", null, "").then(j => { authReady = !!j.authReady; renderPin(false); }).catch(() => renderPin(false));
+}
 loop();
 })();
