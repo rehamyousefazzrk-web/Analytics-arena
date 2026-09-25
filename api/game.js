@@ -138,7 +138,7 @@ function sanitizeQuiz(list) {
     else { a = q.a === "G" ? "G" : "R"; }
     let id = String(q.id || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24) || ("q" + Date.now().toString(36) + i);
     while (seen.has(id)) id += "x"; seen.add(id);
-    return { id, r, type, a, pts: Math.max(1, Math.min(5, Number(q.pts) || 1)), t, opts, unit: clean(q.unit, 16), tol: Math.max(0, Number(q.tol) || 0), e: clean(q.e, 500), d: clean(q.d, 300) };
+    return { id, r, type, a, team: !!q.team, pts: Math.max(1, Math.min(5, Number(q.pts) || 1)), t, opts, unit: clean(q.unit, 16), tol: Math.max(0, Number(q.tol) || 0), e: clean(q.e, 500), d: clean(q.d, 300) };
   });
   return out;
 }
@@ -152,6 +152,7 @@ function rgScores(d) {
     if (!d.st.revealed[qid] || !Q[qid] || !(pid in s)) continue;
     s[pid].ans++;
     const qq = Q[qid];
+    if (qq.team) continue;
     if (qq.type === "poll") { s[pid].arena += SET.scoring.poll; continue; }
     if (qq.type === "text") { const aw = (d.score || {})["txt:" + qid + ":" + pid] || 0; if (aw > 0) { s[pid].pts += aw; s[pid].c++; s[pid].arena += aw * base(); } continue; }
     if (qq.type === "number" ? !numOK(qq, d.rg[f]) : d.rg[f] !== qq.a) continue;
@@ -170,14 +171,29 @@ function revealedCount(d) { return Object.keys(d.st.revealed).filter(k => Q[k] &
 const scored = q => q.type !== "poll";
 const choices = q => q.type === "rg" ? ["R", "G"] : q.type === "mcq" || q.type === "poll" ? q.opts.map((_, i) => "ABCD"[i]) : [];
 const isOpen = q => q.type === "text" || q.type === "number";
+const tkey = (qid, tid) => "tq:" + qid + ":" + tid;
+const quizMaxTeam = () => QUIZ.filter(q => q.team).reduce((n, q) => n + (q.pts || 1), 0);
+// Is this team answer right? (text answers are judged by the trainer)
+function teamRight(q, val) { return q.type === "text" ? null : q.type === "number" ? numOK(q, val) : q.type === "poll" ? null : val === q.a; }
 const numOK = (q, v) => Math.abs(Number(v) - Number(q.a)) <= (q.tol || 0);
 const autoDur = q => q.type === "rg" ? SET.timers.rg : q.type === "text" ? SET.timers.text : q.type === "number" ? SET.timers.mcq : (q.t.length > 110 ? SET.timers.mcqLong : SET.timers.mcq);
 function teamTotals(d) {
-  const t = {}; d.st.teams.forEach(x => t[x.id] = { say: 0, box: 0, boss: 0, total: 0 });
+  const t = {}; d.st.teams.forEach(x => t[x.id] = { say: 0, box: 0, boss: 0, quiz: 0, total: 0 });
   for (const f in d.score) {
     const p = f.split(":"); let tid, g;
-    if (p[0] === "say") { g = "say"; tid = p[2]; } else if (p[0] === "box" || p[0] === "boss") { g = p[0]; tid = p[1]; } else continue;
+    if (p[0] === "say") { g = "say"; tid = p[2]; }
+    else if (p[0] === "tq") { g = "quiz"; tid = p[2]; }              // trainer points for a written team answer
+    else if (p[0] === "box" || p[0] === "boss") { g = p[0]; tid = p[1]; }
+    else continue;
     if (t[tid]) { t[tid][g] += d.score[f]; t[tid].total += d.score[f]; }
+  }
+  // auto-marked team questions (two buttons / choices / number)
+  for (const q of QUIZ) {
+    if (!q.team || !d.st.revealed[q.id] || q.type === "text") continue;
+    for (const tm of d.st.teams) {
+      const sub = d.sub[tkey(q.id, tm.id)];
+      if (sub && teamRight(q, sub.v)) { t[tm.id].quiz += (q.pts || 1); t[tm.id].total += (q.pts || 1); }
+    }
   }
   return t;
 }
@@ -190,6 +206,10 @@ function individuals(d) {
 }
 function votesFor(d, qid) {
   const q0 = Q[qid], c = {}; choices(q0).forEach(k => c[k] = 0); const by = {}; let n = 0;
+  if (q0.team) {
+    for (const tm of d.st.teams) { const sub = d.sub[tkey(qid, tm.id)]; if (!sub) continue; by[tm.id] = sub.v; n++; if (sub.v in c) c[sub.v]++; }
+    return { c, by, n };
+  }
   for (const f in d.rg) {
     const [q, pid] = f.split(":"); if (q !== qid || !d.players[pid]) continue;
     const val = d.rg[f];
@@ -218,11 +238,14 @@ function build(d, { pid, host }) {
       if (!q) cur = { round: stg.round, roundName: R.name, rule: R.rule, level: R.level, kind: R.kind, empty: true, idx: 0, total: 0 };
       else {
       const vv = votesFor(d, q.id);
-      cur = { round: stg.round, roundName: R.name, rule: R.rule, level: R.level, kind: R.kind, idx: stg.idx || 0, total: qs.length, qid: q.id, t: q.t, type: q.type, opts: q.opts || null, pts: q.pts || 1, voted: vv.n, of: players.length };
+      cur = { round: stg.round, roundName: R.name, rule: R.rule, level: R.level, kind: R.kind, idx: stg.idx || 0, total: qs.length, qid: q.id, t: q.t, type: q.type, team: !!q.team, opts: q.opts || null, pts: q.pts || 1, voted: vv.n, of: q.team ? st.teams.length : players.length };
+      if (q.team) cur.submitted = Object.keys(vv.by);
       if (isOpen(q)) { cur.unit = q.unit || ""; cur.tol = q.tol || 0; }
       if (stg.phase === "reveal") {
         Object.assign(cur, { a: q.a, e: q.e, d: q.d, c: vv.c });
-        if (isOpen(q)) cur.answers = Object.entries(vv.by).map(([id, val]) => ({ id, name: d.players[id].name, emoji: d.players[id].emoji, team: d.players[id].team, v: val,
+        if (q.team) cur.tanswers = st.teams.map(tm => { const sub = d.sub[tkey(q.id, tm.id)]; return { tid: tm.id, name: tm.name, v: sub ? sub.v : null, by: sub ? sub.by : "",
+          ok: sub ? teamRight(q, sub.v) : null, aw: d.score[tkey(q.id, tm.id)] || 0 }; });
+        else if (isOpen(q)) cur.answers = Object.entries(vv.by).map(([id, val]) => ({ id, name: d.players[id].name, emoji: d.players[id].emoji, team: d.players[id].team, v: val,
           ok: q.type === "number" ? numOK(q, val) : ((d.score || {})["txt:" + q.id + ":" + id] || 0) > 0,
           aw: (d.score || {})["txt:" + q.id + ":" + id] || 0,
           off: q.type === "number" ? Math.abs(Number(val) - Number(q.a)) : 0 })).sort((x, y) => q.type === "number" ? x.off - y.off : y.aw - x.aw);
@@ -257,7 +280,7 @@ function build(d, { pid, host }) {
   } else if (stg.type === "board") {
     const tt = teamTotals(d);
     const ar = arenaRows(d);
-    cur = { max: MAX, rows: st.teams.map(t => ({ tid: t.id, name: t.name, ...tt[t.id] })).sort((a, b) => b.total - a.total), winner: !!stg.winner,
+    cur = { max: { ...MAX, quiz: quizMaxTeam() }, rows: st.teams.map(t => ({ tid: t.id, name: t.name, ...tt[t.id] })).sort((a, b) => b.total - a.total), winner: !!stg.winner,
       mvp: !!stg.mvp, players: ar.slice(0, 8).map((x, i) => ({ ...x, rank: i + 1 })), playerCount: ar.length, outOf: revealedCount(d), qCount: QUIZ.filter(q => st.revealed[q.id] && scored(q)).length };
   }
   v.cur = cur;
@@ -267,7 +290,12 @@ function build(d, { pid, host }) {
     const me = { id: pid, name: p.name, team: p.team, emoji: p.emoji, score: mine.pts, correct: mine.c, arena: mine.arena, speed: mine.speed, answered: mine.ans,
       outOf: revealedCount(d), qCount: QUIZ.filter(q => d.st.revealed[q.id] && scored(q)).length,
       rank: 1 + Object.values(rs).filter(x => x.arena > mine.arena).length, of: Object.keys(d.players).length };
-    if (stg.type === "rg" && cur && cur.qid) { me.vote = d.rg[cur.qid + ":" + pid] || null; if (stg.phase === "reveal") { const qq = Q[cur.qid]; me.right = qq.type === "number" ? (me.vote != null && me.vote !== "" && numOK(qq, me.vote)) : qq.type === "text" ? ((d.score || {})["txt:" + cur.qid + ":" + pid] || 0) > 0 : (!!cur.a && me.vote === cur.a); if (me.right) { const p = Q[cur.qid].pts || 1; me.gain = p * base() + Math.round(p * base() * speedMax() * Math.max(0, Math.min(1, (d.rgt || {})[cur.qid + ":" + pid] ?? 0))); } } }
+    if (stg.type === "rg" && cur && cur.qid && Q[cur.qid] && Q[cur.qid].team) {
+      const sub = d.sub[tkey(cur.qid, p.team)];
+      me.teamAns = sub || null; me.vote = sub ? sub.v : null;
+      if (stg.phase === "reveal") { const q = Q[cur.qid]; me.right = sub ? (q.type === "text" ? (d.score[tkey(q.id, p.team)] || 0) > 0 : teamRight(q, sub.v)) : false; me.gain = me.right ? (q.type === "text" ? (d.score[tkey(q.id, p.team)] || 0) : (q.pts || 1)) : 0; }
+    }
+    else if (stg.type === "rg" && cur && cur.qid) { me.vote = d.rg[cur.qid + ":" + pid] || null; if (stg.phase === "reveal") { const qq = Q[cur.qid]; me.right = qq.type === "number" ? (me.vote != null && me.vote !== "" && numOK(qq, me.vote)) : qq.type === "text" ? ((d.score || {})["txt:" + cur.qid + ":" + pid] || 0) > 0 : (!!cur.a && me.vote === cur.a); if (me.right) { const p = Q[cur.qid].pts || 1; me.gain = p * base() + Math.round(p * base() * speedMax() * Math.max(0, Math.min(1, (d.rgt || {})[cur.qid + ":" + pid] ?? 0))); } } }
     if (stg.type === "say") me.teamSub = d.sub["say:" + cur.id + ":" + p.team] || null;
     if (stg.type === "box") { me.box = st.boxAssign[p.team] || null; me.teamSub = d.sub["box:" + p.team] || null; }
     if (stg.type === "boss") { me.teamSub = d.sub["boss:" + p.team] || null; me.note = d.sub["note:" + pid] || null; }
@@ -275,7 +303,7 @@ function build(d, { pid, host }) {
   } else if (pid) v.me = null;
 
   if (host) {
-    v.host = { individuals: individuals(d), teamTotals: teamTotals(d), score: d.score, rubric: { say: C.SAY_RUBRIC, box: C.BOX_RUBRIC, boss: BOSS_Q.map(q => q[2]) }, max: MAX,
+    v.host = { individuals: individuals(d), teamTotals: teamTotals(d), score: d.score, rubric: { say: C.SAY_RUBRIC, box: C.BOX_RUBRIC, boss: BOSS_Q.map(q => q[2]) }, max: { ...MAX, quiz: quizMaxTeam() },
       content: { say: SAY, boxes: BOXES, boss: { case: BOSS_CASE, qs: BOSS_Q, drop: DROP } }, customContent: !!d.content, customSetup: !!d.setup,
       notes: Object.fromEntries(Object.keys(d.sub).filter(k => k.startsWith("note:")).map(k => [k.slice(5), d.sub[k].text])),
       rounds: ROUNDS, quiz: QUIZ, customQuiz: !!d.quiz, says: SAY.map(s => s.id), rgTotal: revealedCount(d),
@@ -333,6 +361,11 @@ module.exports = async function handler(req, res) {
       else if (!choices(q).includes(b.v)) return send(res, 409, { ok: false, message: "That statement is over." });
       let frac = 0;
       if (stg.endsAt && stg.startsAt && stg.endsAt > stg.startsAt) frac = Math.max(0, Math.min(1, (stg.endsAt - now) / (stg.endsAt - stg.startsAt)));
+      if (q.team) {
+        const p = d.players[b.pid];
+        await store.cmd("HSET", K.sub, tkey(q.id, p.team), JSON.stringify({ v: b.v, by: p.name, frac })); cache = null;
+        return send(res, 200, { ok: true });
+      }
       await store.pipeline([["HSET", K.rg, q.id + ":" + b.pid, b.v], ["HSET", K.rgt, q.id + ":" + b.pid, String(Math.round(frac * 1000) / 1000)]]); cache = null;
       return send(res, 200, { ok: true });
     }
