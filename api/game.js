@@ -6,7 +6,8 @@ const C = require("../lib/content");
 const store = require("../lib/store");
 
 const P = "mc:";
-const K = { state: P + "state", players: P + "players", rg: P + "rg", rgt: P + "rgt", setup: P + "setup", sub: P + "sub", score: P + "score", quiz: P + "quiz", content: P + "content" };
+const K = { state: P + "state", players: P + "players", rg: P + "rg", rgt: P + "rgt", setup: P + "setup", imgs: P + "imgs", imgv: P + "imgv", auth: P + "auth", devs: P + "devs", sub: P + "sub", score: P + "score", quiz: P + "quiz", content: P + "content" };
+const crypto = require("crypto");
 const HOST_PIN = String(process.env.HOST_PIN || "1234");
 // Set HOST_PIN to "none" (or "off") in Vercel and the trainer page opens with no password at all.
 const OPEN_HOST = ["none", "off", "no", "open", ""].includes(HOST_PIN.trim().toLowerCase());
@@ -27,13 +28,13 @@ function nums(o) { const r = {}; for (const k in o) r[k] = Number(o[k]) || 0; re
 let cache = null;
 async function load(fresh) {
   if (!fresh && cache && Date.now() - cache.t < 700) { setQuiz(cache.d.quiz || C.RG); setContent(cache.d.content); setSetup(cache.d.setup); return cache.d; }
-  const r = await store.pipeline([["GET", K.state], ["HGETALL", K.players], ["HGETALL", K.rg], ["HGETALL", K.sub], ["HGETALL", K.score], ["GET", K.quiz], ["GET", K.content], ["HGETALL", K.rgt], ["GET", K.setup]]);
+  const r = await store.pipeline([["GET", K.state], ["HGETALL", K.players], ["HGETALL", K.rg], ["HGETALL", K.sub], ["HGETALL", K.score], ["GET", K.quiz], ["GET", K.content], ["HGETALL", K.rgt], ["GET", K.setup], ["HGETALL", K.imgv], ["GET", K.auth]]);
   let st = defState();
   if (r[0]) { try { st = { ...st, ...JSON.parse(r[0]) }; } catch (e) { } }
   let quiz = null; if (r[5]) { try { quiz = JSON.parse(r[5]); } catch (e) { } }
   let content = null; if (r[6]) { try { content = JSON.parse(r[6]); } catch (e) { } }
   let setup = null; if (r[8]) { try { setup = JSON.parse(r[8]); } catch (e) { } }
-  const d = { st, players: parseJ(toObj(r[1])), rg: toObj(r[2]), rgt: nums(toObj(r[7])), sub: parseJ(toObj(r[3])), score: nums(toObj(r[4])), quiz: Array.isArray(quiz) && quiz.length ? quiz : null, content: content && content.say ? content : null, setup: setup && setup.name ? setup : null };
+  const d = { st, players: parseJ(toObj(r[1])), rg: toObj(r[2]), rgt: nums(toObj(r[7])), sub: parseJ(toObj(r[3])), score: nums(toObj(r[4])), quiz: Array.isArray(quiz) && quiz.length ? quiz : null, content: content && content.say ? content : null, setup: setup && setup.name ? setup : null, imgv: nums(toObj(r[9])), auth: (() => { try { return r[10] ? JSON.parse(r[10]) : null; } catch (e) { return null; } })() };
   setQuiz(d.quiz || C.RG); setContent(d.content); setSetup(d.setup);
   cache = { t: Date.now(), d };
   return d;
@@ -224,7 +225,7 @@ function roundQs(r) { return QUIZ.filter(q => q.r === r); }
 function build(d, { pid, host }) {
   const st = d.st, stg = st.stage;
   const players = Object.entries(d.players).map(([id, p]) => ({ id, name: p.name, team: p.team, emoji: p.emoji }));
-  const v = { ok: true, now: Date.now(), v: st.v, stage: stg, teams: st.teams, players, db: store.configured, timer: st.timer || null, setup: SET, order: ORDER };
+  const v = { ok: true, now: Date.now(), v: st.v, stage: stg, teams: st.teams, players, db: store.configured, timer: st.timer || null, setup: SET, order: ORDER, authReady: !!(d.auth && d.auth.ready) };
   let cur = null;
   if (stg.type === "rg") {
     const qs = roundQs(stg.round), R = ROUNDS[stg.round] || ROUNDS[ORDER[0]];
@@ -238,7 +239,7 @@ function build(d, { pid, host }) {
       if (!q) cur = { round: stg.round, roundName: R.name, rule: R.rule, level: R.level, kind: R.kind, empty: true, idx: 0, total: 0 };
       else {
       const vv = votesFor(d, q.id);
-      cur = { round: stg.round, roundName: R.name, rule: R.rule, level: R.level, kind: R.kind, idx: stg.idx || 0, total: qs.length, qid: q.id, t: q.t, type: q.type, team: !!q.team, opts: q.opts || null, pts: q.pts || 1, voted: vv.n, of: q.team ? st.teams.length : players.length };
+      cur = { round: stg.round, roundName: R.name, rule: R.rule, level: R.level, kind: R.kind, idx: stg.idx || 0, total: qs.length, qid: q.id, t: q.t, type: q.type, team: !!q.team, opts: q.opts || null, pts: q.pts || 1, img: d.imgv[q.id] || 0, voted: vv.n, of: q.team ? st.teams.length : players.length };
       if (q.team) cur.submitted = Object.keys(vv.by);
       if (isOpen(q)) { cur.unit = q.unit || ""; cur.tol = q.tol || 0; }
       if (stg.phase === "reveal") {
@@ -306,11 +307,51 @@ function build(d, { pid, host }) {
     v.host = { individuals: individuals(d), teamTotals: teamTotals(d), score: d.score, rubric: { say: C.SAY_RUBRIC, box: C.BOX_RUBRIC, boss: BOSS_Q.map(q => q[2]) }, max: { ...MAX, quiz: quizMaxTeam() },
       content: { say: SAY, boxes: BOXES, boss: { case: BOSS_CASE, qs: BOSS_Q, drop: DROP } }, customContent: !!d.content, customSetup: !!d.setup,
       notes: Object.fromEntries(Object.keys(d.sub).filter(k => k.startsWith("note:")).map(k => [k.slice(5), d.sub[k].text])),
-      rounds: ROUNDS, quiz: QUIZ, customQuiz: !!d.quiz, says: SAY.map(s => s.id), rgTotal: revealedCount(d),
+      rounds: ROUNDS, quiz: QUIZ.map(q => (d.imgv[q.id] ? { ...q, img: d.imgv[q.id] } : q)), customQuiz: !!d.quiz, says: SAY.map(s => s.id), rgTotal: revealedCount(d),
       roundLens: Object.fromEntries(ORDER.map(r => [r, roundQs(r).length])) };
     if (stg.type === "rg" && cur && cur.qid) { const q = Q[cur.qid]; cur.a = q.a; cur.e = q.e; cur.d = q.d; cur.c = votesFor(d, q.id).c; }
   }
   return v;
+}
+
+/* ---------------- trainer sign-in: authenticator app + remembered devices ---------------- */
+const B32 = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+function b32encode(buf) { let bits = "", out = ""; for (const b of buf) bits += b.toString(2).padStart(8, "0");
+  for (let i = 0; i + 5 <= bits.length; i += 5) out += B32[parseInt(bits.slice(i, i + 5), 2)];
+  const rest = bits.length % 5; if (rest) out += B32[parseInt(bits.slice(bits.length - rest).padEnd(5, "0"), 2)];
+  return out; }
+function b32decode(str) { let bits = ""; for (const c of String(str).toUpperCase().replace(/[^A-Z2-7]/g, "")) bits += B32.indexOf(c).toString(2).padStart(5, "0");
+  const bytes = []; for (let i = 0; i + 8 <= bits.length; i += 8) bytes.push(parseInt(bits.slice(i, i + 8), 2));
+  return Buffer.from(bytes); }
+function totp(secret, step) {
+  const key = b32decode(secret), buf = Buffer.alloc(8);
+  buf.writeUInt32BE(Math.floor(step / 0x100000000), 0); buf.writeUInt32BE(step >>> 0, 4);
+  const h = crypto.createHmac("sha1", key).update(buf).digest();
+  const o = h[h.length - 1] & 0xf;
+  const n = ((h[o] & 0x7f) << 24) | (h[o + 1] << 16) | (h[o + 2] << 8) | h[o + 3];
+  return String(n % 1000000).padStart(6, "0");
+}
+function totpOK(secret, code) {
+  code = String(code || "").replace(/\D/g, ""); if (code.length !== 6) return false;
+  const step = Math.floor(Date.now() / 30000);
+  for (let w = -1; w <= 1; w++) if (crypto.timingSafeEqual(Buffer.from(totp(secret, step + w)), Buffer.from(code))) return true;
+  return false;
+}
+async function getAuth() { const raw = await store.cmd("GET", K.auth); if (!raw) return null; try { return JSON.parse(raw); } catch (e) { return null; } }
+async function devOK(tok) {
+  if (!tok || !/^[a-f0-9]{32}$/.test(String(tok))) return false;
+  const raw = await store.cmd("HGET", K.devs, String(tok));
+  if (!raw) return false;
+  try { const d = JSON.parse(raw); if (Date.now() - (d.last || 0) > 60000) { d.last = Date.now(); await store.cmd("HSET", K.devs, String(tok), JSON.stringify(d)); } } catch (e) {}
+  return true;
+}
+// A request is from the trainer if it carries a known device token, or the PIN while the PIN is still allowed.
+async function isHost({ tok, pin }) {
+  if (tok && await devOK(tok)) return true;
+  if (pin == null) return false;
+  const a = await getAuth();
+  if (a && a.ready && a.pinOff) return false;          // authenticator only
+  return pinOK(pin);
 }
 
 /* ---------------- helpers ---------------- */
@@ -329,10 +370,33 @@ module.exports = async function handler(req, res) {
     if (!store.configured && process.env.VERCEL) return send(res, 503, { ok: false, error: "db", message: "Database not connected. In Vercel: Storage → Upstash for Redis → Connect to this project, then Redeploy." });
     const url = new URL(req.url, "http://x");
     if (req.method === "GET") {
-      const pin = url.searchParams.get("pin");
-      if (pin != null && !pinOK(pin)) return send(res, 403, { ok: false, error: "pin" });
+      // Locked out? Set HOST_RESET in Vercel, open …/api/game?reset=<that value>, and the
+      // authenticator + remembered devices are cleared so the PIN works again. Then delete the variable.
+      const rst = url.searchParams.get("reset");
+      if (rst != null) {
+        const want = String(process.env.HOST_RESET || "");
+        if (!want || rst !== want) return send(res, 403, { ok: false, message: "No." });
+        await store.cmd("DEL", K.auth, K.devs); cache = null;
+        return send(res, 200, { ok: true, message: "Authenticator removed. Sign in with the PIN, then delete HOST_RESET in Vercel." });
+      }
+      const imgQ = url.searchParams.get("img");
+      if (imgQ) {
+        const raw = await store.cmd("HGET", K.imgs, String(imgQ));
+        if (!raw) { res.statusCode = 404; return res.end(); }
+        let x; try { x = JSON.parse(raw); } catch (e) { res.statusCode = 404; return res.end(); }
+        const buf = Buffer.from(x.d, "base64");
+        res.statusCode = 200;
+        res.setHeader("Content-Type", x.t);
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        return res.end(buf);
+      }
+      const pin = url.searchParams.get("pin"), tok = url.searchParams.get("tok");
+      const wantsHost = pin != null || tok != null;
+      if (wantsHost && !(await isHost({ tok, pin }))) return send(res, 403, { ok: false, error: "pin" });
       const d = await load(false);
-      return send(res, 200, build(d, { pid: url.searchParams.get("pid"), host: pin != null }));
+      const v = build(d, { pid: url.searchParams.get("pid"), host: wantsHost });
+      if (wantsHost) v.auth = { ready: !!(d.auth && d.auth.ready), pinOff: !!(d.auth && d.auth.pinOff) };
+      return send(res, 200, v);
     }
     if (req.method !== "POST") return send(res, 405, { ok: false });
     const b = await readBody(req);
@@ -356,7 +420,7 @@ module.exports = async function handler(req, res) {
       if (stg.startsAt && now < stg.startsAt - 400) return send(res, 409, { ok: false, message: "Get ready…" });
       const q = roundQs(stg.round)[stg.idx || 0];
       if (!q || q.id !== b.qid) return send(res, 409, { ok: false, message: "That statement is over." });
-      if (q.type === "text") { b.v = clean(b.v, 300); if (!b.v) return send(res, 400, { ok: false, message: "Write something first." }); }
+      if (q.type === "text") { b.v = clean(b.v, 1000); if (!b.v) return send(res, 400, { ok: false, message: "Write something first." }); }
       else if (q.type === "number") { if (b.v === "" || b.v == null || isNaN(Number(b.v))) return send(res, 400, { ok: false, message: "Write a number." }); b.v = String(Number(b.v)); }
       else if (!choices(q).includes(b.v)) return send(res, 409, { ok: false, message: "That statement is over." });
       let frac = 0;
@@ -388,8 +452,17 @@ module.exports = async function handler(req, res) {
       return send(res, 200, { ok: true });
     }
 
+    if (b.a === "signin") {
+      const a = await getAuth();
+      if (!a || !a.ready) return send(res, 400, { ok: false, message: "The authenticator app isn't set up yet — sign in with the PIN." });
+      if (!totpOK(a.secret, b.code)) return send(res, 403, { ok: false, message: "Wrong code — check the app and try again." });
+      const tok = crypto.randomBytes(16).toString("hex");
+      await store.cmd("HSET", K.devs, tok, JSON.stringify({ name: clean(b.name, 40) || "Device", created: now, last: now }));
+      return send(res, 200, { ok: true, tok });
+    }
+
     if (b.a === "host") {
-      if (!pinOK(b.pin)) return send(res, 403, { ok: false, error: "pin" });
+      if (!(await isHost({ tok: b.tok, pin: b.pin }))) return send(res, 403, { ok: false, error: "pin" });
       const d = await load(true); const st = d.st;
       const op = b.op;
       if (op === "stage") {
@@ -402,11 +475,67 @@ module.exports = async function handler(req, res) {
       } else if (op === "timer") { const base = b.add && st.stage.endsAt && st.stage.endsAt > now ? st.stage.endsAt : now; st.stage.endsAt = b.dur ? base + b.dur * 1000 : null; if (!b.add || !st.stage.startsAt) st.stage.startsAt = now; await saveState(st); }
       else if (op === "mic") { st.stage.mic = b.pid || null; await saveState(st); }
       else if (op === "teams") { (b.teams || []).forEach(t => { const x = st.teams.find(y => y.id === t.id); if (x) x.name = clean(t.name, 24) || x.name; }); await saveState(st); }
-      else if (op === "quizSave") { const list = sanitizeQuiz(b.quiz); await store.cmd("SET", K.quiz, JSON.stringify(list)); cache = null; return send(res, 200, { ok: true, count: list.length }); }
+      else if (op === "quizSave") {
+        const list = sanitizeQuiz(b.quiz);
+        await store.cmd("SET", K.quiz, JSON.stringify(list));
+        const keep = new Set(list.map(q => q.id)), gone = Object.keys(d.imgv).filter(id => !keep.has(id));
+        if (gone.length) await store.pipeline([["HDEL", K.imgs, ...gone], ["HDEL", K.imgv, ...gone]]);
+        cache = null; return send(res, 200, { ok: true, count: list.length });
+      }
       else if (op === "contentSave") { const c = sanitizeContent(b.content); await store.cmd("SET", K.content, JSON.stringify(c)); cache = null; return send(res, 200, { ok: true }); }
       else if (op === "contentReset") { await store.cmd("DEL", K.content); cache = null; }
       else if (op === "setupSave") { const x = sanitizeSetup(b.setup); await store.cmd("SET", K.setup, JSON.stringify(x)); cache = null; return send(res, 200, { ok: true }); }
       else if (op === "setupReset") { await store.cmd("DEL", K.setup); cache = null; }
+      else if (op === "imgSave") {
+        const qid = String(b.qid || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24);
+        const m = /^data:(image\/(?:png|jpeg|webp|gif));base64,([A-Za-z0-9+/=]+)$/.exec(String(b.data || ""));
+        if (!qid || !m) return send(res, 400, { ok: false, message: "That image didn't work — try a PNG or JPG." });
+        if (m[2].length > 900000) return send(res, 400, { ok: false, message: "That image is too big." });
+        const v = (d.imgv[qid] || 0) + 1;
+        await store.pipeline([["HSET", K.imgs, qid, JSON.stringify({ t: m[1], d: m[2] })], ["HSET", K.imgv, qid, String(v)]]);
+        cache = null; return send(res, 200, { ok: true, v });
+      }
+      else if (op === "authSetup") {
+        let a = await getAuth();
+        if (!a || !a.ready) { a = { secret: b32encode(crypto.randomBytes(20)), ready: false, pinOff: false }; await store.cmd("SET", K.auth, JSON.stringify(a)); cache = null; }
+        if (a.ready) return send(res, 200, { ok: true, ready: true });
+        const label = encodeURIComponent((SET.name || "Arena") + " — trainer");
+        return send(res, 200, { ok: true, ready: false, secret: a.secret, uri: "otpauth://totp/" + label + "?secret=" + a.secret + "&issuer=" + encodeURIComponent(SET.name || "Arena") + "&period=30&digits=6" });
+      }
+      else if (op === "authConfirm") {
+        const a = await getAuth();
+        if (!a || !a.secret) return send(res, 400, { ok: false, message: "Start the setup again." });
+        if (!totpOK(a.secret, b.code)) return send(res, 400, { ok: false, message: "Wrong code — try the next one the app shows." });
+        a.ready = true; await store.cmd("SET", K.auth, JSON.stringify(a)); cache = null;
+        const tok = crypto.randomBytes(16).toString("hex");
+        await store.cmd("HSET", K.devs, tok, JSON.stringify({ name: clean(b.name, 40) || "This device", created: now, last: now }));
+        return send(res, 200, { ok: true, tok });
+      }
+      else if (op === "authPin") { const a = await getAuth(); if (!a || !a.ready) return send(res, 400, { ok: false, message: "Set up the app first." }); a.pinOff = !!b.off; await store.cmd("SET", K.auth, JSON.stringify(a)); cache = null; return send(res, 200, { ok: true }); }
+      else if (op === "authOff") { await store.cmd("DEL", K.auth, K.devs); cache = null; return send(res, 200, { ok: true }); }
+      else if (op === "devList") {
+        const all = parseJ(toObj(await store.cmd("HGETALL", K.devs)));
+        return send(res, 200, { ok: true, devices: Object.entries(all).map(([tok, d]) => ({ id: tok.slice(0, 8), tok, name: d.name, created: d.created, last: d.last, me: tok === b.tok })) });
+      }
+      else if (op === "devRevoke") { await store.cmd("HDEL", K.devs, String(b.tok)); return send(res, 200, { ok: true }); }
+      else if (op === "devRevokeAll") {
+        const all = toObj(await store.cmd("HGETALL", K.devs));
+        const others = Object.keys(all).filter(t => t !== b.tok);
+        if (others.length) await store.cmd("HDEL", K.devs, ...others);
+        return send(res, 200, { ok: true, removed: others.length });
+      }
+      else if (op === "imgDel") { await store.pipeline([["HDEL", K.imgs, String(b.qid)], ["HDEL", K.imgv, String(b.qid)]]); cache = null; }
+      else if (op === "imgAll") { const all = toObj(await store.cmd("HGETALL", K.imgs)); return send(res, 200, { ok: true, images: parseJ(all) }); }
+      else if (op === "imgRestore") {
+        const imgs = b.images || {}; const sets = [], vers = [];
+        for (const qid of Object.keys(imgs).slice(0, 60)) {
+          const x = imgs[qid]; if (!x || !x.d || !/^image\/(png|jpeg|webp|gif)$/.test(x.t || "")) continue;
+          if (String(x.d).length > 900000) continue;
+          sets.push(qid, JSON.stringify({ t: x.t, d: x.d })); vers.push(qid, String((d.imgv[qid] || 0) + 1));
+        }
+        if (sets.length) await store.pipeline([["HSET", K.imgs, ...sets], ["HSET", K.imgv, ...vers]]);
+        cache = null;
+      }
       else if (op === "bigTimer") { st.timer = b.dur ? { label: clean(b.label, 60), startsAt: now, endsAt: now + Number(b.dur) * 1000 } : null; await saveState(st); }
       else if (op === "quizReset") { await store.cmd("DEL", K.quiz); cache = null; }
       else if (op === "teamCount") {
@@ -420,6 +549,14 @@ module.exports = async function handler(req, res) {
       else if (op === "boxDraw") { const ids = shuffle(BOXES.map(x => x.id)); st.boxAssign = {}; st.teams.forEach((t, i) => { if (i && i % ids.length === 0) ids.push(...shuffle(ids.splice(0))); st.boxAssign[t.id] = ids[i % ids.length]; }); await saveState(st); }
       else if (op === "score") { const pairs = Object.entries(b.scores || {}).flatMap(([k, v]) => [k, Number(v) || 0]); if (pairs.length) await store.cmd("HSET", K.score, ...pairs); cache = null; }
       else if (op === "move") { const p = d.players[b.pid]; if (p && st.teams.find(t => t.id === b.team)) { p.team = b.team; await store.cmd("HSET", K.players, b.pid, JSON.stringify(p)); cache = null; } }
+      else if (op === "balance") {
+        const ids = st.teams.map(t => t.id);
+        const list = shuffle(Object.keys(d.players));
+        const moves = [];
+        list.forEach((pid, i) => { const p = d.players[pid]; const team = ids[i % ids.length]; if (p.team !== team) { p.team = team; moves.push(pid, JSON.stringify(p)); } });
+        if (moves.length) await store.cmd("HSET", K.players, ...moves);
+        cache = null;
+      }
       else if (op === "kick") { await store.cmd("HDEL", K.players, b.pid); cache = null; }
       else if (op === "reset") {
         if (b.all) await store.cmd("DEL", K.state, K.players, K.rg, K.rgt, K.sub, K.score);
