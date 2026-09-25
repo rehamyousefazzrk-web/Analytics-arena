@@ -190,7 +190,8 @@ function typing() { const a = document.activeElement; return a && /INPUT|TEXTARE
 const nfmt = n => (n || 0).toLocaleString("en-US");
 
 /* ---- session setup (name, logo, colours, rounds) ---- */
-const SETUP = () => (V && V.setup) || { name: "Arena", tagline: "", accent: "#1A9FEF", logo: "", emojis: EMOJIS, flag: { R: { label: "Red flag", emoji: "\u{1F6A9}" }, G: { label: "Green flag", emoji: "\u2705" } }, games: { say: 1, box: 1, boss: 1 }, rounds: [], scoring: { base: 100, speed: 50, poll: 0 }, timers: { rg: 20, mcq: 30, mcqLong: 40 } };
+const SETUP = () => (V && V.setup) || { name: "Arena", tagline: "", accent: "#1A9FEF", logo: "", emojis: EMOJIS, flag: { R: { label: "Red flag", emoji: "\u{1F6A9}" }, G: { label: "Green flag", emoji: "\u2705" } }, games: { say: 1, box: 1, boss: 1 }, rounds: [], scoring: { base: 100, speed: 50, poll: 0 }, timers: { rg: 20, mcq: 30, mcqLong: 40, text: 60 }, limits: { text: 1000 } };
+const textMax = () => ((SETUP().limits || {}).text) || 1000;
 const emojiSet = () => { const e = SETUP().emojis; return e && e.length ? e : EMOJIS; };
 const logoSrc = () => SETUP().logo || "/assets/logo.png";
 function brandHTML(sub) {
@@ -209,6 +210,11 @@ function applyBrand() {
 }
 const flagOf = k => { const f = SETUP().flag || {}; const x = f[k] || {}; return { label: x.label || (k === "R" ? "Red flag" : "Green flag"), emoji: x.emoji || (k === "R" ? "\u{1F6A9}" : "\u2705") }; };
 const imgURL = c => "/api/game?img=" + encodeURIComponent(c.qid || c.id) + "&v=" + c.img;
+const fileURL = c => "/api/game?file=" + encodeURIComponent(c.qid || c.id) + "&v=" + (c.file ? c.file.v : 0);
+const kb = n => !n ? "" : n > 1048576 ? (n / 1048576).toFixed(1) + " MB" : Math.max(1, Math.round(n / 1024)) + " KB";
+const fileIcon = t => /pdf/.test(t || "") ? "📕" : /word|document/.test(t || "") ? "📘" : /sheet|excel|csv/.test(t || "") ? "📗" : /presentation|powerpoint/.test(t || "") ? "📙" : /image/.test(t || "") ? "🖼" : "📎";
+const qFile = (c, big) => !c || !c.file ? "" :
+  `<a class="filebtn ${big ? "big" : ""}" href="${fileURL(c)}" target="_blank" rel="noopener"><span class="ic">${fileIcon(c.file.t)}</span><span class="nm">${esc(c.file.n)}</span><span class="sz mono">${kb(c.file.size)} · open</span></a>`;
 const qImg = (c, cls) => !c || !c.img ? "" : cls === "ph"
   ? `<div class="qimgwrap"><img class="qimg ph" src="${imgURL(c)}" alt="" data-act="zoom" data-u="${imgURL(c)}"><button class="zoomhint" data-act="zoom" data-u="${imgURL(c)}">🔍 Tap to open full size</button></div>`
   : `<img class="qimg ${cls || ""}" src="${imgURL(c)}" alt="">`;
@@ -272,7 +278,7 @@ function renderPlayer() {
       const cls = poll || (txt && !me.right) ? "none" : !me.vote ? "none" : me.right ? "ok" : "no";
       body = `<div class="splash ${cls}"><div class="disp">${poll ? "Thanks!" : txt && !me.right ? "Answer sent" : !me.vote ? "No vote" : me.right ? "Correct!" : "Not this time"}</div>
         <p>${poll ? "Results are on the screen." : cur.team ? (me.right ? "+" + me.gain + " points for " + tname(me.team).replace(/<[^>]*>/g, "") : me.vote ? "Your team missed this one" : "Your team didn't answer") : me.right ? "+" + nfmt(me.gain) + " points" + (me.gain > cur.pts * SETUP().scoring.base ? " ⚡ speed bonus" : "") : !me.vote ? "You didn't vote on this one." : txt ? "Answers are on the screen 👀" : "Listen to the explanation 👀"}</p></div>
-        ${qImg(cur, "ph")}
+        ${qImg(cur, "ph")}${qFile(cur)}
         ${poll || txt ? (cur.e ? `<div class="pcard"><p style="margin:0;font-size:18px">${esc(cur.e)}</p></div>` : "") : `<div class="pcard"><div class="eyebrow">Answer</div><p style="margin:4px 0 0;font-weight:700;font-size:18px">${ansLabel(cur)}</p><p style="margin:8px 0 0;font-size:18px">${esc(cur.e)}</p></div>`}
         <div class="stats3"><div><span class="eyebrow">Correct</span><b>${me.correct}/${me.qCount}</b></div><div><span class="eyebrow">Points</span><b>${nfmt(me.arena)}</b></div><div><span class="eyebrow">Rank</span><b>#${me.rank}</b></div></div>`;
       if (lastResultQ !== cur.qid) { lastResultQ = cur.qid; if (me.right) { confetti(90); navigator.vibrate && navigator.vibrate(60); } else if (me.vote) navigator.vibrate && navigator.vibrate([40, 60, 40]); }
@@ -289,7 +295,7 @@ function renderPlayer() {
       const btns = open
         ? (cur.type === "number"
           ? `<div class="field"><input class="input big" id="f-ans" type="number" step="any" inputmode="decimal" data-draft="${dkey}" value="${esc(draft(dkey, me.vote))}" placeholder="Your number${cur.unit ? " (" + esc(cur.unit) + ")" : ""}" ${closed ? "disabled" : ""}></div>`
-          : `<div class="field"><textarea class="input" id="f-ans" data-draft="${dkey}" dir="auto" maxlength="1000" placeholder="Your answer…" ${closed ? "disabled" : ""}>${esc(draft(dkey, me.vote))}</textarea><div class="counter"><span id="ansCount">${(draft(dkey, me.vote) || "").length}</span> / 1000</div></div>`)
+          : `<div class="field"><textarea class="input" id="f-ans" data-draft="${dkey}" dir="auto" maxlength="${textMax()}" placeholder="Your answer…" ${closed ? "disabled" : ""}>${esc(draft(dkey, me.vote))}</textarea><div class="counter"><span id="ansCount">${(draft(dkey, me.vote) || "").length}</span> / ${textMax()}</div></div>`)
           + `<button class="btn red cta" style="margin-top:10px" data-act="sendAns" ${closed ? "disabled" : ""}>${me.vote ? "Update my answer" : "Send my answer"}</button>
              ${me.vote ? `<p class="saved">✓ Sent${isTeam && ta ? " by " + esc(ta.by) + " — anyone in the team can edit" : " — you can still change it"}</p>` : ""}`
         : cur.type !== "rg"
@@ -299,7 +305,7 @@ function renderPlayer() {
           <button class="vote g ${onoff("G")}" data-act="vote" data-v="G" ${closed ? "disabled" : ""}>${flagOf("G").emoji} ${esc(flagOf("G").label)}</button>
         </div>`;
       body = `<div class="eyebrow">${esc(cur.roundName)} · ${cur.idx + 1}/${cur.total}${cur.pts > 1 ? " · " + ptsTxt(cur.pts) : ""}</div>
-        ${teamBar}<p class="pstatement">${esc(cur.t)}</p>${qImg(cur, "ph")}${tbar(stg)}
+        ${teamBar}<p class="pstatement">${esc(cur.t)}</p>${qImg(cur, "ph")}${qFile(cur)}${tbar(stg)}
         ${btns}
         ${open ? "" : `<p class="lock">${closed ? "⏰ Time's up" : isTeam ? (me.vote ? "Anyone in the team can still change it" : "Tap the answer for your team") : me.vote ? "🔒 Locked in — tap the other one to change" : "Tap your answer"}</p>`}`;
     }
@@ -500,7 +506,7 @@ function screenHTML() {
       : `<div class="flags">${["R", "G"].map(k => `<div class="flag ${k.toLowerCase()} ${rev && c.a ? (c.a === k ? "win" : "lose") : ""}"><div style="flex:1"><div class="disp">${flagOf(k).emoji} ${esc(flagOf(k).label)}</div>${rev ? `<div class="vbar"><i style="width:${pct(k)}%"></i></div>` : ""}</div>${rev ? `<div class="pct">${pct(k)}%</div>` : ""}</div>`).join("")}</div>`;
     h = `<div class="row"><div class="eyebrow">${esc(c.roundName)} · ${esc(c.level)} · ${c.idx + 1}/${c.total}${c.team ? " · 👥 team answer" : ""}${c.pts > 1 ? " · " + ptsTxt(c.pts) : ""}</div><div class="spacer"></div>${c.mic && rev ? `<div class="mic">🎤 ${esc(c.mic.emoji)} ${esc(c.mic.name)}</div>` : ""}</div>
       <p class="big-statement ${c.type !== "rg" ? "q" : ""} ${c.img ? "withimg" : ""}">${esc(c.t)}</p>
-      ${qImg(c, "sc")}
+      ${qImg(c, "sc")}${c.file ? `<div class="filenote">📎 <b>${esc(c.file.n)}</b> — open it from your phone</div>` : ""}
       ${(openQ || isTeamQ) && !rev ? `<div class="meta">${ring(s, true)}<div><div class="voted mono">${c.voted}/${c.of}</div><div class="eyebrow">${isTeamQ ? "teams in" : "answered"}</div></div></div>` : ""}
       ${choicesHTML}
       ${rev && (c.e || c.d) ? `<div class="explain ${c.d ? "" : "one"}"><div><div class="eyebrow">${c.type === "poll" ? "Note" : "Why"}</div><p>${esc(c.e)}</p></div>${c.d ? `<div class="disc"><div class="eyebrow">Discuss</div><p>${esc(c.d)}</p></div>` : ""}</div>`
@@ -906,7 +912,7 @@ function setupHTML() {
 
     <div class="qed"><div class="eyebrow big">🏆 Scoring & timers</div>
       <div class="s3">${flds("Points per 1-point answer", "scoring.base", sc.base, { num: 1 })}${flds("Speed bonus %  (0 = off)", "scoring.speed", sc.speed, { num: 1 })}${flds("Points for answering a poll", "scoring.poll", sc.poll, { num: 1 })}</div>
-      <div class="s3">${flds("Seconds · two-button", "timers.rg", tm.rg, { num: 1 })}${flds("Seconds · choices", "timers.mcq", tm.mcq, { num: 1 })}${flds("Seconds · long choices", "timers.mcqLong", tm.mcqLong, { num: 1 })}${flds("Seconds · written answer", "timers.text", tm.text, { num: 1 })}</div>
+      <div class="s3">${flds("Seconds · two-button", "timers.rg", tm.rg, { num: 1 })}${flds("Seconds · choices", "timers.mcq", tm.mcq, { num: 1 })}${flds("Seconds · long choices", "timers.mcqLong", tm.mcqLong, { num: 1 })}${flds("Seconds · written answer", "timers.text", tm.text, { num: 1 })}${flds("Letters allowed in a written answer", "limits.text", (S.limits || {}).text, { num: 1 })}</div>
       <p class="muted small">Speed bonus 50% means the fastest correct answer is worth 1.5×. Set 0 and only correct answers count.</p>
     </div>
 
@@ -943,13 +949,17 @@ function renderEditor() {
     <textarea class="hinput" rows="2" data-ef="t" data-i="${i}" dir="auto">${esc(q.t)}</textarea>
     ${q.type === "mcq" || q.type === "poll"
       ? `<label class="eyebrow">${q.type === "poll" ? "Options — a poll has no right answer" : "Options — tap the circle to mark the correct one"}</label>${[0, 1, 2, 3].map(k => { const L = "ABCD"[k]; return `<div class="row" style="flex-wrap:nowrap">${q.type === "poll" ? `<span class="radio dead">${L}</span>` : `<button class="radio ${q.a === L ? "on" : ""}" data-act="edAns" data-i="${i}" data-v="${L}" title="Correct answer">${q.a === L ? "✓" : L}</button>`}<input class="hinput" style="flex:1" data-ef="opt" data-o="${k}" data-i="${i}" value="${esc((q.opts || [])[k] || "")}" placeholder="Option ${L}${k > 1 ? " (optional)" : ""}" dir="auto"></div>`; }).join("")}`
-      : q.type === "text" ? `<p class="muted small" style="margin:6px 0">${q.team ? "Each team sends one written answer. After Reveal you give each team 0 to ${q.pts || 1} points from the trainer bar." : "Everyone writes their own answer. After Reveal you give each one 0 to ${q.pts || 1} points from the trainer bar."}</p>`
+      : q.type === "text" ? `<p class="muted small" style="margin:6px 0">${q.team ? "Each team sends one written answer. After Reveal you give each team 0 to " + (q.pts || 1) + " points from the trainer bar." : "Everyone writes their own answer. After Reveal you give each one 0 to " + (q.pts || 1) + " points from the trainer bar."}</p>`
       : q.type === "number" ? `<div class="s3">${fld("Right number", "a", q.a, { num: 1 }).replace(/data-cf=/g, 'data-ef=').replace('data-ef="a"', 'data-ef="a" data-i="' + i + '"')}${fld("Accepted ± ", "tol", q.tol || 0, { num: 1 }).replace(/data-cf=/g, 'data-ef=').replace('data-ef="tol"', 'data-ef="tol" data-i="' + i + '"')}${fld("Unit (optional)", "unit", q.unit || "", { ph: "%" }).replace(/data-cf=/g, 'data-ef=').replace('data-ef="unit"', 'data-ef="unit" data-i="' + i + '"')}</div>`
       : `<label class="eyebrow">Correct answer</label><div class="row"><button class="btn sm ${q.a === "R" ? "red-on" : "ghost"}" data-act="edAns" data-i="${i}" data-v="R">${flagOf("R").emoji} ${esc(flagOf("R").label)}</button><button class="btn sm ${q.a === "G" ? "green-on" : "ghost"}" data-act="edAns" data-i="${i}" data-v="G">${flagOf("G").emoji} ${esc(flagOf("G").label)}</button></div>`}
     <div class="imgrow">${q.img ? `<img class="thumb" src="/api/game?img=${encodeURIComponent(q.id)}&v=${q.img}" alt="">` : `<span class="muted small">No picture</span>`}
       <button class="btn sm" data-act="edImg" data-i="${i}">${q.img ? "Change picture" : "🖼 Add a picture"}</button>
       ${q.img ? `<button class="btn sm ghost" data-act="edImgDel" data-i="${i}">Remove</button>` : ""}
-      <span class="muted small">A screenshot, a chart, a case study page — shown on the big screen and on the phones.</span></div>
+      <span class="muted small">Shown on the big screen and on the phones.</span></div>
+    <div class="imgrow">${q.file ? `<span class="chip">${fileIcon(q.file.t)} ${esc(q.file.n)} · ${kb(q.file.size)}</span>` : `<span class="muted small">No file</span>`}
+      <button class="btn sm" data-act="edFile" data-i="${i}">${q.file ? "Change file" : "📎 Attach a file"}</button>
+      ${q.file ? `<a class="btn sm ghost" href="/api/game?file=${encodeURIComponent(q.id)}&v=${q.file.v}" target="_blank" rel="noopener">Open</a><button class="btn sm ghost" data-act="edFileDel" data-i="${i}">Remove</button>` : ""}
+      <span class="muted small">PDF, Word, Excel, CSV… up to 3 MB. Everyone gets a button to open it on their phone.</span></div>
     <label class="eyebrow">${q.type === "poll" ? "Comment shown after the results (optional)" : "Why — shown after reveal"}</label>
     <textarea class="hinput" rows="2" data-ef="e" data-i="${i}" dir="auto">${esc(q.e || "")}</textarea>
     <label class="eyebrow">Discussion prompt (optional)</label>
@@ -969,7 +979,7 @@ function renderEditor() {
     <div class="nav big">${[["ind", "👤 Individual questions"], ["group", "👥 Group games"], ["setup", "⚙️ Session setup"]].map(([k, l]) => `<button class="${edTab === k ? "on" : ""}" data-act="edTab" data-t="${k}">${l}</button>`).join("")}</div>
     <div style="margin-top:12px">${edTab === "ind" ? indBody : edTab === "group" ? groupHTML() : setupHTML()}</div>
     <div class="row" style="margin-top:14px"><div class="spacer"></div><button class="btn red" data-act="edSave">💾 Save changes</button></div>
-    <input type="file" id="edImgFile" accept="image/*" hidden></div>`;
+    <input type="file" id="edImgFile" accept="image/*" hidden><input type="file" id="edAttFile" hidden></div>`;
   m.scrollTop = scroll;
 }
 document.addEventListener("input", e => {
@@ -978,7 +988,7 @@ document.addEventListener("input", e => {
   if (EDS && el.dataset.cs) {
     const path = el.dataset.cs;
     if (path === "emojisText") EDS.emojis = [...el.value.replace(/[\s,]+/gu, " ").trim()].length ? splitEmojis(el.value) : [];
-    else if (path.startsWith("scoring.") || path.startsWith("timers.")) setPath(EDS, path, Number(el.value) || 0);
+    else if (path.startsWith("scoring.") || path.startsWith("timers.") || path.startsWith("limits.")) setPath(EDS, path, Number(el.value) || 0);
     else setPath(EDS, path, el.value);
     if (path === "accent" || path === "name") { brandSig = ""; const keep = V.setup; V.setup = EDS; applyBrand(); V.setup = keep; }
     return;
@@ -1040,6 +1050,20 @@ document.addEventListener("change", e => {
     img.onerror = () => toast("Couldn't read that image");
     img.src = url; el.value = "";
   }
+  if (el.id === "edAttFile" && el.files && el.files[0]) {
+    const file = el.files[0], q = ED && ED[+el.dataset.i];
+    el.value = "";
+    if (!q || !q.id) return toast("Save the question first, then attach the file");
+    if (file.size > 3 * 1024 * 1024) return toast("That file is too big — keep it under 3 MB");
+    const rd = new FileReader();
+    rd.onload = async () => {
+      const ok = await host("fileSave", { qid: q.id, name: file.name, data: rd.result });
+      if (ok) { await refresh(); ED = clone(V.host.quiz); edOrig = JSON.stringify([ED, EDC, EDS]); renderEditor(); toast("File attached ✓"); }
+    };
+    rd.onerror = () => toast("Couldn't read that file");
+    rd.readAsDataURL(file);
+    return;
+  }
   if (el.id === "edFile" && el.files && el.files[0]) {
     const r = new FileReader();
     r.onload = () => {
@@ -1053,6 +1077,7 @@ document.addEventListener("change", e => {
         const a3 = a2 && p.content ? await host("contentSave", { content: EDC }) : a2;
         if (!a3) return;
         if (p.images && Object.keys(p.images).length) await host("imgRestore", { images: p.images });
+        if (p.files && Object.keys(p.files).length) await host("fileRestore", { files: p.files });
         await refresh();
         ED = clone(V.host.quiz); EDC = clone(V.host.content); EDS = clone(V.setup);
         edOrig = JSON.stringify([ED, EDC, EDS]); edRound = (EDS.rounds[0] || {}).key || edRound; edTab = "setup";
@@ -1148,8 +1173,10 @@ async function hostAct(a, d) {
       await refresh(); ED = clone(V.host.quiz); EDC = clone(V.host.content); EDS = clone(V.setup); edOrig = JSON.stringify([ED, EDC, EDS]); brandSig = ""; applyBrand(); renderEditor(); toast("Original content restored"); return; }
     case "edExport": {
       let images = {};
-      try { const r = await api("POST", { a: "host", pin, op: "imgAll" }); images = r.images || {}; } catch (e) {}
-      const pack = { app: "analytics-arena", version: 1, exported: new Date().toISOString(), setup: EDS, quiz: ED, content: EDC, images };
+      try { const r = await api("POST", { a: "host", pin, tok, op: "imgAll" }); images = r.images || {}; } catch (e) {}
+      let files = {};
+      try { const r = await api("POST", { a: "host", pin, tok, op: "fileAll" }); files = r.files || {}; } catch (e) {}
+      const pack = { app: "analytics-arena", version: 1, exported: new Date().toISOString(), setup: EDS, quiz: ED, content: EDC, images, files };
       const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(pack, null, 2)], { type: "application/json" }));
       a.download = (EDS.name || "session").toLowerCase().replace(/[^a-z0-9]+/g, "-") + ".arena.json"; document.body.appendChild(a); a.click(); a.remove();
       return toast("Session file downloaded"); }
@@ -1158,6 +1185,15 @@ async function hostAct(a, d) {
       const q = ED[+d.i];
       if (!q.id) { const ok = await host("quizSave", { quiz: ED }); if (!ok) return; await refresh(); ED = clone(V.host.quiz); EDC = clone(V.host.content); EDS = clone(V.setup); edOrig = JSON.stringify([ED, EDC, EDS]); renderEditor(); toast("Questions saved first — now pick the picture"); }
       const f = $("#edImgFile"); if (!f) return; f.dataset.i = d.i; imgFor = +d.i; f.click(); return; }
+    case "edFile": {
+      const q = ED[+d.i];
+      if (!q.id) { const ok = await host("quizSave", { quiz: ED }); if (!ok) return; await refresh(); ED = clone(V.host.quiz); EDC = clone(V.host.content); EDS = clone(V.setup); edOrig = JSON.stringify([ED, EDC, EDS]); renderEditor(); toast("Questions saved first — now pick the file"); }
+      const f = $("#edAttFile"); if (!f) return; f.dataset.i = d.i; f.click(); return; }
+    case "edFileDel": {
+      const q = ED[+d.i]; if (!q || !q.id) return;
+      if (!confirm("Remove the file from this question?")) return;
+      await host("fileDel", { qid: q.id }); await refresh();
+      ED = clone(V.host.quiz); edOrig = JSON.stringify([ED, EDC, EDS]); renderEditor(); return; }
     case "edImgDel": {
       const q = ED[+d.i]; if (!q || !q.id) return;
       if (!confirm("Remove the picture from this question?")) return;
