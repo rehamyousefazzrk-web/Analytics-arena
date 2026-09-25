@@ -127,7 +127,8 @@ function fireworks(ms = 9000) {
   burst(); setTimeout(burst, 260); setTimeout(burst, 520);
   const iv = setInterval(() => { if (performance.now() > end) return clearInterval(iv); burst(); }, 520);
   (function step(t) {
-    x.globalCompositeOperation = "source-over"; x.fillStyle = "rgba(6,18,31,.22)"; x.fillRect(0, 0, c.width, c.height);
+    // fade the old sparks without painting over the page
+    x.globalCompositeOperation = "destination-out"; x.fillStyle = "rgba(0,0,0,.22)"; x.fillRect(0, 0, c.width, c.height);
     x.globalCompositeOperation = "lighter";
     for (let i = P.length - 1; i >= 0; i--) { const p = P[i];
       p.x += p.vx; p.y += p.vy; p.vy += .045; p.vx *= .988; p.vy *= .988; p.life -= .0125;
@@ -246,10 +247,10 @@ function renderPlayer() {
       <p class="muted" style="margin-top:14px">${esc(cur.takeaway)}</p></div>`;
   } else if (t === "rg") {
     if (ph === "reveal") {
-      const poll = cur.type === "poll", txt = cur.type === "text";
+      const poll = cur.type === "poll", txt = cur.type === "text" && !me.right;
       const cls = poll || (txt && !me.right) ? "none" : !me.vote ? "none" : me.right ? "ok" : "no";
       body = `<div class="splash ${cls}"><div class="disp">${poll ? "Thanks!" : txt && !me.right ? "Answer sent" : !me.vote ? "No vote" : me.right ? "Correct!" : "Not this time"}</div>
-        <p>${poll ? "Results are on the screen." : me.right ? "+" + nfmt(me.gain) + " points" + (me.gain > cur.pts * SETUP().scoring.base ? " ⚡ speed bonus" : "") : !me.vote ? "You didn't vote on this one." : txt ? "Answers are on the screen 👀" : "Listen to the explanation 👀"}</p></div>
+        <p>${poll ? "Results are on the screen." : cur.team ? (me.right ? "+" + me.gain + " points for " + tname(me.team).replace(/<[^>]*>/g, "") : me.vote ? "Your team missed this one" : "Your team didn't answer") : me.right ? "+" + nfmt(me.gain) + " points" + (me.gain > cur.pts * SETUP().scoring.base ? " ⚡ speed bonus" : "") : !me.vote ? "You didn't vote on this one." : txt ? "Answers are on the screen 👀" : "Listen to the explanation 👀"}</p></div>
         ${poll || txt ? (cur.e ? `<div class="pcard"><p style="margin:0;font-size:18px">${esc(cur.e)}</p></div>` : "") : `<div class="pcard"><div class="eyebrow">Answer</div><p style="margin:4px 0 0;font-weight:700;font-size:18px">${ansLabel(cur)}</p><p style="margin:8px 0 0;font-size:18px">${esc(cur.e)}</p></div>`}
         <div class="stats3"><div><span class="eyebrow">Correct</span><b>${me.correct}/${me.qCount}</b></div><div><span class="eyebrow">Points</span><b>${nfmt(me.arena)}</b></div><div><span class="eyebrow">Rank</span><b>#${me.rank}</b></div></div>`;
       if (lastResultQ !== cur.qid) { lastResultQ = cur.qid; if (me.right) { confetti(90); navigator.vibrate && navigator.vibrate(60); } else if (me.vote) navigator.vibrate && navigator.vibrate([40, 60, 40]); }
@@ -258,6 +259,9 @@ function renderPlayer() {
     } else {
       const closed = timeUp(stg);
       const onoff = k => me.vote === k ? "on" : me.vote ? "off" : "";
+      const isTeam = !!cur.team;
+      const ta = me.teamAns;
+      const teamBar = isTeam ? `<div class="teambar tcol" data-t="${me.team}">👥 One answer for ${tname(me.team)}${ta ? ` · sent by ${esc(ta.by)}` : ""}</div>` : "";
       const open = cur.type === "text" || cur.type === "number";
       const dkey = "ans:" + cur.qid;
       const btns = open
@@ -265,7 +269,7 @@ function renderPlayer() {
           ? `<div class="field"><input class="input big" id="f-ans" type="number" step="any" inputmode="decimal" data-draft="${dkey}" value="${esc(draft(dkey, me.vote))}" placeholder="Your number${cur.unit ? " (" + esc(cur.unit) + ")" : ""}" ${closed ? "disabled" : ""}></div>`
           : `<div class="field"><textarea class="input" id="f-ans" data-draft="${dkey}" dir="auto" maxlength="300" placeholder="Your answer…" ${closed ? "disabled" : ""}>${esc(draft(dkey, me.vote))}</textarea></div>`)
           + `<button class="btn red cta" style="margin-top:10px" data-act="sendAns" ${closed ? "disabled" : ""}>${me.vote ? "Update my answer" : "Send my answer"}</button>
-             ${me.vote ? `<p class="saved">✓ Sent — you can still change it</p>` : ""}`
+             ${me.vote ? `<p class="saved">✓ Sent${isTeam && ta ? " by " + esc(ta.by) + " — anyone in the team can edit" : " — you can still change it"}</p>` : ""}`
         : cur.type !== "rg"
         ? `<div class="mcq">${cur.opts.map((o, i) => { const k = "ABCD"[i]; return `<button class="opt o${k} ${onoff(k)}" data-act="vote" data-v="${k}" ${closed ? "disabled" : ""}><span class="sh">${SHAPES[k]}</span><span>${esc(o)}</span></button>`; }).join("")}</div>`
         : `<div class="votebtns">
@@ -273,9 +277,9 @@ function renderPlayer() {
           <button class="vote g ${onoff("G")}" data-act="vote" data-v="G" ${closed ? "disabled" : ""}>${flagOf("G").emoji} ${esc(flagOf("G").label)}</button>
         </div>`;
       body = `<div class="eyebrow">${esc(cur.roundName)} · ${cur.idx + 1}/${cur.total}${cur.pts > 1 ? " · " + ptsTxt(cur.pts) : ""}</div>
-        <p class="pstatement">${esc(cur.t)}</p>${tbar(stg)}
+        ${teamBar}<p class="pstatement">${esc(cur.t)}</p>${tbar(stg)}
         ${btns}
-        ${open ? "" : `<p class="lock">${closed ? "⏰ Time's up" : me.vote ? "🔒 Locked in — tap the other one to change" : "Tap your answer"}</p>`}`;
+        ${open ? "" : `<p class="lock">${closed ? "⏰ Time's up" : isTeam ? (me.vote ? "Anyone in the team can still change it" : "Tap the answer for your team") : me.vote ? "🔒 Locked in — tap the other one to change" : "Tap your answer"}</p>`}`;
     }
   } else if (t === "say") {
     if (ph === "reveal") body = waitCard("👀", "Eyes on the screen", "Let's see what every team wrote.");
@@ -305,11 +309,38 @@ function renderPlayer() {
     else body = waitCard("⚔️", "Boss fight incoming", "Read the case on the screen.");
   } else if (t === "board") {
     const podium = me.rank <= 3 && me.arena > 0;
-    body = `<div class="pcard wait ${podium && stg.mvp ? "gold" : ""}"><span class="em">${stg.mvp ? (podium ? ["🥇", "🥈", "🥉"][me.rank - 1] : "👑") : stg.winner ? "🏆" : "📊"}</span>
-      <h2 class="disp bigtitle">${stg.mvp ? (podium ? "You're on the podium!" : "Your final result") : stg.winner ? "Winner on screen!" : "Scoreboard"}</h2>
+    const rows = (cur && cur.rows) || [], topT = rows[0];
+    const winners = topT && topT.total > 0 ? rows.filter(r => r.total === topT.total) : [];
+    const iWon = winners.some(w => w.tid === me.team);
+    const med = ["🥇", "🥈", "🥉"];
+
+    // 🏆 winning team — the same announcement as the big screen
+    const teamCard = stg.winner && winners.length ? `<div class="pcard wait win-card ${iWon ? "gold" : ""}" style="margin-bottom:10px">
+      <span class="em">🏆</span><div class="eyebrow">${winners.length > 1 ? "Winning teams" : "Winning team"}</div>
+      ${winners.map(w => `<h2 class="disp bigtitle tcol" data-t="${w.tid}" style="color:var(--c);margin:.1em 0">${esc(w.name)}</h2>`).join("")}
+      ${iWon ? `<p class="muted" style="margin:6px 0 0">That's your team 🎉</p>` : ""}
+      <div class="pboard">${rows.map((r, i) => `<div class="prow tcol ${winners.includes(r) ? "on" : ""} ${r.tid === me.team ? "mine" : ""}" data-t="${r.tid}"><span class="rk">#${i + 1}</span><span class="nm">${esc(r.name)}</span><b>${r.total}</b></div>`).join("")}</div></div>` : "";
+
+    // 👑 best players
+    const tops = (cur && cur.players) || [];
+    const mvpCard = stg.mvp ? `<div class="pcard wait ${podium ? "gold" : ""}" style="margin-bottom:10px">
+      <span class="em">${podium ? med[me.rank - 1] : "👑"}</span><div class="eyebrow">Best players</div>
+      <h2 class="disp bigtitle" style="margin:.1em 0">${podium ? "You're on the podium!" : "Top of the arena"}</h2>
+      <div class="pboard">${tops.slice(0, 5).map(x => `<div class="prow tcol ${x.rank <= 3 ? "on" : ""} ${x.id === me.id ? "mine" : ""}" data-t="${x.team}"><span class="rk">${x.rank <= 3 ? med[x.rank - 1] : "#" + x.rank}</span><span class="nm">${esc(x.emoji)} ${esc(x.name)}</span><b>${nfmt(x.arena)}</b></div>`).join("")}</div></div>` : "";
+
+    const mine = `<div class="pcard wait"><span class="em">📊</span><h2 class="disp bigtitle">Your result</h2>
       <div class="stats3" style="margin-top:16px"><div><span class="eyebrow">Correct</span><b>${me.correct}/${me.qCount}</b></div><div><span class="eyebrow">Points</span><b>${nfmt(me.arena)}</b></div><div><span class="eyebrow">Rank</span><b>#${me.rank} of ${me.of}</b></div></div>
       <p class="muted" style="margin-top:14px">⚡ ${nfmt(me.speed)} of your points came from answering fast.</p></div>`;
-    if (stg.mvp && lastResultQ !== "mvp") { lastResultQ = "mvp"; if (podium) { confetti(140); navigator.vibrate && navigator.vibrate([60, 60, 120]); } }
+
+    body = (!stg.winner && !stg.mvp ? `<div class="pcard wait"><span class="em">📊</span><h2 class="disp bigtitle">Scoreboard</h2><p class="muted">Eyes on the screen…</p></div>` : "") + teamCard + mvpCard + mine;
+
+    const key = "board:" + !!stg.winner + ":" + !!stg.mvp;
+    if ((stg.winner || stg.mvp) && lastResultQ !== key) {
+      lastResultQ = key;
+      const big = (stg.winner && iWon) || (stg.mvp && podium);
+      confetti(big ? 180 : 90); fireworks(big ? 6000 : 3500);
+      navigator.vibrate && navigator.vibrate(big ? [60, 60, 120, 60, 200] : [40, 60, 40]);
+    }
   }
   app.innerHTML = `<div class="phone">${head}${body}</div>`;
   tickTimers();
@@ -417,6 +448,16 @@ function screenHTML() {
   } else if (t === "rg") {
     const rev = ph === "reveal"; const tot = rev ? Object.values(c.c).reduce((a, b) => a + b, 0) : 0; const pct = k => tot ? Math.round(c.c[k] / tot * 100) : 0;
     if (c.empty) return top + `<div class="stage"><div class="cdwrap"><div class="eyebrow">${esc(c.roundName)}</div><div class="lvl-up">No questions yet</div><div class="lvl-sub">Add some from ✏️ Content on the trainer page.</div></div></div>`;
+    const isTeamQ = !!c.team;
+    const teamAnsHTML = () => {
+      const list = c.tanswers || [];
+      if (!rev) return `<div class="teams" style="grid-template-columns:repeat(auto-fit,minmax(9em,1fr))">${V.teams.map(tm => { const ok = (c.submitted || []).includes(tm.id); return `<div class="team tcol" data-t="${tm.id}" style="min-height:0"><h3 class="disp">${esc(tm.name)}</h3><div class="st ${ok ? "ok" : ""}">${ok ? "✓ Answer in" : "✍️ Thinking…"}</div></div>`; }).join("")}</div>`;
+      const show = v => { if (v == null) return `<span class="muted">No answer</span>`; if (c.type === "rg") return `${flagOf(v).emoji} ${esc(flagOf(v).label)}`; if (c.type === "mcq" || c.type === "poll") { const i = "ABCD".indexOf(v); return `${SHAPES[v] || ""} ${esc((c.opts || [])[i] || v)}`; } return esc(v); };
+      return `<div class="tans">${list.map(x => `<div class="a tcol ${x.ok === true ? "ok" : x.ok === false ? "no" : ""} ${x.aw ? "star" : ""}" data-t="${x.tid}">
+        <div class="who">${esc(x.name)}${x.ok === true ? ' <span class="tick">✓</span>' : x.ok === false ? ' <span class="cross">✗</span>' : ""}${x.aw ? ` <span class="tick">★ ${x.aw}</span>` : ""}</div>
+        <p dir="auto">${show(x.v)}</p>${x.by ? `<span class="by">by ${esc(x.by)}</span>` : ""}</div>`).join("")}</div>
+        ${c.a && c.type !== "text" ? `<div class="rightans"><span class="eyebrow">Right answer</span><b>${ansLabel(c)}</b></div>` : ""}`;
+    };
     const openQ = c.type === "text" || c.type === "number";
     const openHTML = () => {
       if (!rev) return "";
@@ -425,15 +466,15 @@ function screenHTML() {
         <div class="alist">${list.slice(0, 12).map(x => `<div class="a tcol ${x.ok ? "ok" : ""}" data-t="${x.team}"><span>${esc(x.emoji)} ${esc(x.name)}</span><b>${esc(x.v)}</b>${x.ok ? `<span class="tick">✓</span>` : `<span class="muted">${x.off > 0 ? "off by " + (Math.round(x.off * 100) / 100) : ""}</span>`}</div>`).join("") || `<p class="muted">No answers.</p>`}</div></div>`;
       return `<div class="txtans">${list.map(x => `<div class="a tcol ${x.aw ? "star" : ""}" data-t="${x.team}"><div class="who">${esc(x.emoji)} ${esc(x.name)}${x.aw ? ` <span class="tick">★ ${x.aw}</span>` : ""}</div><p dir="auto">${esc(x.v)}</p></div>`).join("") || `<p class="muted">No answers.</p>`}</div>`;
     };
-    const choicesHTML = openQ ? openHTML() : c.type !== "rg"
+    const choicesHTML = isTeamQ ? teamAnsHTML() : openQ ? openHTML() : c.type !== "rg"
       ? `<div class="sopts">${c.opts.map((o, i) => { const k = "ABCD"[i]; return `<div class="sopt o${k} ${rev && c.a ? (c.a === k ? "win" : "lose") : ""}"><span class="sh">${SHAPES[k]}</span><span class="tx">${esc(o)}</span>${rev ? `<span class="pc">${pct(k)}%</span>` : ""}</div>`; }).join("")}</div>`
       : `<div class="flags">${["R", "G"].map(k => `<div class="flag ${k.toLowerCase()} ${rev && c.a ? (c.a === k ? "win" : "lose") : ""}"><div style="flex:1"><div class="disp">${flagOf(k).emoji} ${esc(flagOf(k).label)}</div>${rev ? `<div class="vbar"><i style="width:${pct(k)}%"></i></div>` : ""}</div>${rev ? `<div class="pct">${pct(k)}%</div>` : ""}</div>`).join("")}</div>`;
-    h = `<div class="row"><div class="eyebrow">${esc(c.roundName)} · ${esc(c.level)} · ${c.idx + 1}/${c.total}${c.pts > 1 ? " · " + ptsTxt(c.pts) : ""}</div><div class="spacer"></div>${c.mic && rev ? `<div class="mic">🎤 ${esc(c.mic.emoji)} ${esc(c.mic.name)}</div>` : ""}</div>
+    h = `<div class="row"><div class="eyebrow">${esc(c.roundName)} · ${esc(c.level)} · ${c.idx + 1}/${c.total}${c.team ? " · 👥 team answer" : ""}${c.pts > 1 ? " · " + ptsTxt(c.pts) : ""}</div><div class="spacer"></div>${c.mic && rev ? `<div class="mic">🎤 ${esc(c.mic.emoji)} ${esc(c.mic.name)}</div>` : ""}</div>
       <p class="big-statement ${c.type !== "rg" ? "q" : ""}">${esc(c.t)}</p>
-      ${openQ && !rev ? `<div class="meta">${ring(s, true)}<div><div class="voted mono">${c.voted}/${c.of}</div><div class="eyebrow">answered</div></div></div>` : ""}
+      ${(openQ || isTeamQ) && !rev ? `<div class="meta">${ring(s, true)}<div><div class="voted mono">${c.voted}/${c.of}</div><div class="eyebrow">${isTeamQ ? "teams in" : "answered"}</div></div></div>` : ""}
       ${choicesHTML}
       ${rev && (c.e || c.d) ? `<div class="explain ${c.d ? "" : "one"}"><div><div class="eyebrow">${c.type === "poll" ? "Note" : "Why"}</div><p>${esc(c.e)}</p></div>${c.d ? `<div class="disc"><div class="eyebrow">Discuss</div><p>${esc(c.d)}</p></div>` : ""}</div>`
-        : rev || openQ ? "" : `<div class="meta">${ring(s, true)}<div><div class="voted mono">${c.voted}/${c.of}</div><div class="eyebrow">voted</div></div><div class="dotsrow">${V.players.map((p, i) => `<span class="${i < c.voted ? "in" : ""}"></span>`).join("")}</div></div>`}`;
+        : rev || openQ || isTeamQ ? "" : `<div class="meta">${ring(s, true)}<div><div class="voted mono">${c.voted}/${c.of}</div><div class="eyebrow">voted</div></div><div class="dotsrow">${V.players.map((p, i) => `<span class="${i < c.voted ? "in" : ""}"></span>`).join("")}</div></div>`}`;
   } else if (t === "say") {
     const rev = ph === "reveal";
     h = `<div class="row"><div class="eyebrow">Say it like a human · Case ${c.id} · team game</div><div class="spacer"></div>${!rev ? ring(s) : ""}</div>
@@ -482,10 +523,15 @@ function screenHTML() {
       <div class="dmg">${V.teams.map(tm => `<span class="tcol" data-t="${tm.id}">⚔️ ${esc(tm.name)} ${c.dmg[tm.id] || 0}</span>`).join("")}</div></div>`;
     h = `${hpbar}<div class="bossgrid">${left}${right}</div>`;
   } else if (t === "board") {
-    const cols = [["Say it", "say", c.max.say, "var(--t4)"], ["Mystery box", "box", c.max.box, "var(--t2)"], ["Boss fight", "boss", c.max.boss, "var(--t1)"]];
-    const MAX = c.max.say + c.max.box + c.max.boss; const top = c.rows[0]; const winners = c.rows.filter(r => r.total === top.total && top.total > 0);
+    const g = SETUP().games || {};
+    const cols = [];
+    if (c.max.quiz) cols.push(["Team questions", "quiz", c.max.quiz, "var(--sky)"]);
+    if (g.say !== false) cols.push(["Say it", "say", c.max.say, "var(--t4)"]);
+    if (g.box !== false) cols.push(["Mystery box", "box", c.max.box, "var(--t2)"]);
+    if (g.boss !== false) cols.push(["Boss fight", "boss", c.max.boss, "var(--t1)"]);
+    const MAX = cols.reduce((n, x) => n + x[2], 0) || 1; const top = c.rows[0]; const winners = c.rows.filter(r => r.total === top.total && top.total > 0);
     h = `<div class="row"><h2 class="disp ${c.mvp ? "sh2" : "sh"}" style="margin:0">Scoreboard</h2><div class="spacer"></div><div class="legend">${cols.map(x => `<span style="--c:${x[3]}">${x[0]} /${x[2]}</span>`).join("")}</div></div>
-      <div class="board ${c.mvp ? "mini" : ""}">${c.rows.map((r, i) => `<div class="brow tcol ${c.winner && winners.includes(r) ? "win" : ""}" data-t="${r.tid}" style="animation-delay:${i * .12}s"><span class="rk">#${i + 1}</span><span class="nm">${esc(r.name)}</span><span class="trk">${cols.map(x => `<i style="width:${r[x[1]] / MAX * 100}%;background:${x[3]}"></i>`).join("")}</span><span class="tot">${r.total}</span></div>`).join("")}</div>
+      <div class="board ${c.mvp ? "mini" : ""}">${c.rows.map((r, i) => `<div class="brow tcol ${c.winner && winners.includes(r) ? "win" : ""}" data-t="${r.tid}" style="animation-delay:${i * .12}s"><span class="rk">#${i + 1}</span><span class="nm">${esc(r.name)}</span><span class="trk">${cols.map(x => `<i style="width:${(r[x[1]] || 0) / MAX * 100}%;background:${x[3]}"></i>`).join("")}</span><span class="tot">${r.total}</span></div>`).join("")}</div>
       ${c.winner && winners.length ? `<div class="winner ${c.mvp ? "compact" : ""}"><img class="wmascot" src="${logoSrc()}" alt="" onerror="this.remove()">${winners.map(w => `<div class="w tcol" data-t="${w.tid}">🏆 ${esc(w.name)}</div>`).join("")}<div class="takeaway" style="margin-top:.3em">Turn numbers into <span>action.</span></div></div>` : ""}
       ${c.mvp ? mvpHTML(c) : ""}`;
   }
@@ -584,12 +630,13 @@ function dockHTML() {
     if (s.phase === "summary") b = `<div class="ctx"><span class="info">Round summary on screen.</span><button class="btn sm" data-act="rgGo" data-i="${n - 1}">← Back to last statement</button><div class="spacer"></div><button class="btn primary" data-act="nextSection">Next section ▶</button></div>`;
     else {
       const nv = (c.notVoted || []).map(id => V.players.find(p => p.id === id)).filter(Boolean);
-      b = `<div class="ctx"><b>${esc(c.roundName)} · ${idx + 1}/${n}</b><span class="info">Answer: <span class="spoiler">${ansLabel(c)}</span> · ${c.type === "text" || c.type === "number" ? "answers " + c.voted + "/" + c.of : "votes " + c.voted + "/" + c.of + " (" + Object.entries(c.c || {}).map(([k, v]) => (c.type === "rg" ? (k === "R" ? flagOf("R").emoji : flagOf("G").emoji) : k) + v).join(" ") + ")"}</span><div class="spacer"></div>
+      b = `<div class="ctx"><b>${esc(c.roundName)} · ${idx + 1}/${n}</b><span class="info">Answer: <span class="spoiler">${ansLabel(c)}</span> · ${c.team ? "teams " + c.voted + "/" + c.of : c.type === "text" || c.type === "number" ? "answers " + c.voted + "/" + c.of : "votes " + c.voted + "/" + c.of + " (" + Object.entries(c.c || {}).map(([k, v]) => (c.type === "rg" ? (k === "R" ? flagOf("R").emoji : flagOf("G").emoji) : k) + v).join(" ") + ")"}</span><div class="spacer"></div>
         <button class="btn sm" data-act="rgGo" data-i="${idx - 1}" ${idx === 0 ? "disabled" : ""}>← Prev</button>
         ${s.phase === "vote" ? `<button class="btn sm" data-act="rgRestart">Restart timer</button><button class="btn red" data-act="rgReveal">Reveal <span class="kbd">R</span></button>`
           : `${idx < n - 1 ? `<button class="btn primary" data-act="rgGo" data-i="${idx + 1}">Next statement ▶ <span class="kbd">→</span></button>` : `<button class="btn primary" data-act="rgSummary">Round summary ▶</button>`}`}</div>
         ${s.phase === "vote" && nv.length ? `<div class="ctx info">Not voted yet: ${nv.map(p => esc(p.name)).join(", ")}</div>` : ""}
-        ${s.phase === "reveal" && c.type === "text" ? `<div class="ctx awards"><b>Give points</b>${(c.answers || []).map(x => `<span class="award"><span class="nm">${esc(x.emoji)} ${esc(x.name)}</span>${[0, 1, 2, 3].map(n => `<button class="${(x.aw || 0) === n ? "on" : ""}" data-act="award" data-q="${c.qid}" data-p="${x.id}" data-v="${n}">${n}</button>`).join("")}</span>`).join("") || `<span class="info">No answers yet.</span>`}</div>` : ""}
+        ${s.phase === "reveal" && c.team && c.type === "text" ? `<div class="ctx awards"><b>Give team points</b>${(c.tanswers || []).filter(x => x.v).map(x => `<span class="award"><span class="nm">${esc(x.name)}</span>${Array.from({ length: (c.pts || 1) + 1 }, (_, n) => `<button class="${(x.aw || 0) === n ? "on" : ""}" data-act="awardT" data-q="${c.qid}" data-t="${x.tid}" data-v="${n}">${n}</button>`).join("")}</span>`).join("") || `<span class="info">No team answers.</span>`}</div>` : ""}
+        ${s.phase === "reveal" && !c.team && c.type === "text" ? `<div class="ctx awards"><b>Give points</b>${(c.answers || []).map(x => `<span class="award"><span class="nm">${esc(x.emoji)} ${esc(x.name)}</span>${Array.from({ length: (c.pts || 1) + 1 }, (_, n) => `<button class="${(x.aw || 0) === n ? "on" : ""}" data-act="award" data-q="${c.qid}" data-p="${x.id}" data-v="${n}">${n}</button>`).join("")}</span>`).join("") || `<span class="info">No answers yet.</span>`}</div>` : ""}
         ${s.phase === "reveal" ? `<div class="ctx"><button class="btn sm amber" data-act="mic">🎤 Pick someone to explain</button>${s.mic ? `<span class="info">${esc((V.players.find(p => p.id === s.mic) || {}).name)}</span><button class="btn sm" data-act="reason" data-p="${s.mic}">+1 Reasoning</button><button class="btn sm" data-act="part" data-p="${s.mic}">+1 Participation</button><button class="btn sm ghost" data-act="micClear">Clear</button>` : ""}${c.d ? `<span class="info">Discuss: ${esc(c.d)}</span>` : ""}</div>` : ""}`;
     }
   } else if (s.type === "say") {
@@ -641,8 +688,8 @@ function csv() {
   const H = V.host; const q = s => '"' + String(s).replace(/"/g, '""') + '"';
   let out = "Intern,Team,Correct answers,Arena points (correct + speed),Quiz points /" + H.rgTotal + ",Boss note /10,Reasoning /5,Participation /5,Total /100,Boss note text\n";
   H.individuals.forEach(r => out += [q(r.name), q(teamOf(r.team).name), r.correct, r.arena, r.rg, r.note, r.re, r.pa, r.total, q(H.notes[r.id] || "")].join(",") + "\n");
-  out += "\nTeam,Say It /15,Mystery Box /10,Boss Fight /30,Total /55\n";
-  V.teams.forEach(t => { const x = H.teamTotals[t.id]; out += [q(t.name), x.say, x.box, x.boss, x.total].join(",") + "\n"; });
+  out += "\nTeam,Team questions,Say It,Mystery Box,Boss Fight,Total\n";
+  V.teams.forEach(t => { const x = H.teamTotals[t.id]; out += [q(t.name), x.quiz || 0, x.say, x.box, x.boss, x.total].join(",") + "\n"; });
   const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob(["﻿" + out], { type: "text/csv" })); a.download = "analytics-arena-scores.csv"; document.body.appendChild(a); a.click(); a.remove();
 }
 /* ---------------- standalone big timer ---------------- */
@@ -726,6 +773,7 @@ function groupHTML() {
     ${fld("Drop-off options players choose from (one per line)", "boss.dropText", (EDC.boss.drop || []).join("\n"), { area: 1, rows: 5 })}</div>
     ${EDC.boss.qs.map((q, i) => `<div class="qed"><div class="row"><b class="mono">Q${i + 1}</b>
       <span class="muted small">Answer type</span><span class="seg">${[["yesno", "Yes / No"], ["drop", "Drop-off list"], ["text", "Writing"]].map(([v, l]) => `<button class="${q[3] === v ? "on" : ""}" data-act="edSet" data-p="boss.qs.${i}.3" data-v="${v}">${l}</button>`).join("")}</span>
+      <span class="seg who"><button class="${q.team ? "" : "on"}" data-act="edTeam" data-i="${i}" data-v="0">👤 Each player</button><button class="${q.team ? "on" : ""}" data-act="edTeam" data-i="${i}" data-v="1">👥 One per team</button></span>
       <span class="muted small">Points</span><span class="seg">${[1, 2, 3, 4, 5].map(pt => `<button class="${q[2] === pt ? "on" : ""}" data-act="edSetNum" data-p="boss.qs.${i}.2" data-v="${pt}">${pt}</button>`).join("")}</span>
       <span class="spacer"></span>
       <button class="btn sm ghost" data-act="edGMove" data-g="boss.qs" data-i="${i}" data-v="-1" ${i === 0 ? "disabled" : ""}>↑</button>
@@ -814,6 +862,7 @@ function renderEditor() {
   const card = ({ q, i }, n) => `<div class="qed">
     <div class="row"><b class="mono">#${n + 1}</b>
       <span class="seg"><button class="${q.type === "rg" || !q.type ? "on" : ""}" data-act="edType" data-i="${i}" data-v="rg">${flagOf("R").emoji}${flagOf("G").emoji} Two buttons</button><button class="${q.type === "mcq" ? "on" : ""}" data-act="edType" data-i="${i}" data-v="mcq">ABCD Choices</button><button class="${q.type === "poll" ? "on" : ""}" data-act="edType" data-i="${i}" data-v="poll">📊 Poll</button><button class="${q.type === "text" ? "on" : ""}" data-act="edType" data-i="${i}" data-v="text">✍️ Written</button><button class="${q.type === "number" ? "on" : ""}" data-act="edType" data-i="${i}" data-v="number">🔢 Number</button></span>
+      <span class="seg who"><button class="${q.team ? "" : "on"}" data-act="edTeam" data-i="${i}" data-v="0">👤 Each player</button><button class="${q.team ? "on" : ""}" data-act="edTeam" data-i="${i}" data-v="1">👥 One per team</button></span>
       <span class="muted small">Points</span><span class="seg">${[1, 2, 3, 4, 5].map(p => `<button class="${(q.pts || 1) === p ? "on" : ""}" data-act="edPts" data-i="${i}" data-v="${p}">${p}</button>`).join("")}</span>
       <span class="spacer"></span>
       <button class="btn sm ghost" data-act="edMove" data-i="${i}" data-v="-1" ${n === 0 ? "disabled" : ""} title="Move up">↑</button>
@@ -823,7 +872,7 @@ function renderEditor() {
     <textarea class="hinput" rows="2" data-ef="t" data-i="${i}" dir="auto">${esc(q.t)}</textarea>
     ${q.type === "mcq" || q.type === "poll"
       ? `<label class="eyebrow">${q.type === "poll" ? "Options — a poll has no right answer" : "Options — tap the circle to mark the correct one"}</label>${[0, 1, 2, 3].map(k => { const L = "ABCD"[k]; return `<div class="row" style="flex-wrap:nowrap">${q.type === "poll" ? `<span class="radio dead">${L}</span>` : `<button class="radio ${q.a === L ? "on" : ""}" data-act="edAns" data-i="${i}" data-v="${L}" title="Correct answer">${q.a === L ? "✓" : L}</button>`}<input class="hinput" style="flex:1" data-ef="opt" data-o="${k}" data-i="${i}" value="${esc((q.opts || [])[k] || "")}" placeholder="Option ${L}${k > 1 ? " (optional)" : ""}" dir="auto"></div>`; }).join("")}`
-      : q.type === "text" ? `<p class="muted small" style="margin:6px 0">Everyone writes their own answer. After Reveal you give each one 0–3 points from the trainer bar.</p>`
+      : q.type === "text" ? `<p class="muted small" style="margin:6px 0">${q.team ? "Each team sends one written answer. After Reveal you give each team 0 to ${q.pts || 1} points from the trainer bar." : "Everyone writes their own answer. After Reveal you give each one 0 to ${q.pts || 1} points from the trainer bar."}</p>`
       : q.type === "number" ? `<div class="s3">${fld("Right number", "a", q.a, { num: 1 }).replace(/data-cf=/g, 'data-ef=').replace('data-ef="a"', 'data-ef="a" data-i="' + i + '"')}${fld("Accepted ± ", "tol", q.tol || 0, { num: 1 }).replace(/data-cf=/g, 'data-ef=').replace('data-ef="tol"', 'data-ef="tol" data-i="' + i + '"')}${fld("Unit (optional)", "unit", q.unit || "", { ph: "%" }).replace(/data-cf=/g, 'data-ef=').replace('data-ef="unit"', 'data-ef="unit" data-i="' + i + '"')}</div>`
       : `<label class="eyebrow">Correct answer</label><div class="row"><button class="btn sm ${q.a === "R" ? "red-on" : "ghost"}" data-act="edAns" data-i="${i}" data-v="R">${flagOf("R").emoji} ${esc(flagOf("R").label)}</button><button class="btn sm ${q.a === "G" ? "green-on" : "ghost"}" data-act="edAns" data-i="${i}" data-v="G">${flagOf("G").emoji} ${esc(flagOf("G").label)}</button></div>`}
     <label class="eyebrow">${q.type === "poll" ? "Comment shown after the results (optional)" : "Why — shown after reveal"}</label>
@@ -946,6 +995,7 @@ function edAct(a, d) {
     else if (d.v === "text") q.a = null;
     else if (d.v === "number") { q.a = isNaN(Number(q.a)) ? 0 : Number(q.a); q.tol = q.tol || 0; }
     else q.a = q.a === "G" ? "G" : "R"; }
+  else if (a === "edTeam") q.team = d.v === "1";
   else if (a === "edPts") q.pts = +d.v;
   else if (a === "edAns") q.a = d.v;
   else if (a === "edDel") { if (!confirm("Delete this question?")) return; ED.splice(i, 1); }
@@ -1000,7 +1050,7 @@ async function hostAct(a, d) {
     case "edRound": case "edType": case "edPts": case "edAns": case "edDel": case "edMove": case "edAdd":
     case "edTab": case "edGroup": case "edSet": case "edSetNum": case "edTog": case "edPatAdd": case "edPatDel":
     case "edDataAdd": case "edDataDel": case "edGMove": case "edGDel": case "edGAdd":
-    case "edRAdd": case "edRDel": case "edRMove": case "edSTog": case "edEmojiPreset": return edAct(a, d);
+    case "edRAdd": case "edRDel": case "edRMove": case "edSTog": case "edEmojiPreset": case "edTeam": return edAct(a, d);
     case "nextSection": { const S = sections(); const i = S.findIndex(x => x[0] === curSection()); return goSection(S[Math.min(S.length - 1, i + 1)][0]); }
     case "min": dockMin = !dockMin; ls.set("mc-dockmin", dockMin); lastDockSig = ""; return render();
     case "sound": soundOn = !soundOn; sfx("join"); lastDockSig = ""; return render();
@@ -1013,6 +1063,7 @@ async function hostAct(a, d) {
       catch (e) { prompt("Copy this link and bookmark it:", link); }
       return; }
     case "award": { await host("score", { scores: { ["txt:" + d.q + ":" + d.p]: +d.v } }); return; }
+    case "awardT": { await host("score", { scores: { ["tq:" + d.q + ":" + d.t]: +d.v } }); return; }
     case "scores": return scoresModal();
     case "closeModal": { const m = $("#scoresModal"); m && m.remove(); return; }
     case "csv": return csv();
