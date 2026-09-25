@@ -6,8 +6,11 @@ const C = require("../lib/content");
 const store = require("../lib/store");
 
 const P = "mc:";
-const K = { state: P + "state", players: P + "players", rg: P + "rg", sub: P + "sub", score: P + "score", quiz: P + "quiz", content: P + "content" };
+const K = { state: P + "state", players: P + "players", rg: P + "rg", rgt: P + "rgt", setup: P + "setup", sub: P + "sub", score: P + "score", quiz: P + "quiz", content: P + "content" };
 const HOST_PIN = String(process.env.HOST_PIN || "1234");
+// Set HOST_PIN to "none" (or "off") in Vercel and the trainer page opens with no password at all.
+const OPEN_HOST = ["none", "off", "no", "open", ""].includes(HOST_PIN.trim().toLowerCase());
+const pinOK = p => OPEN_HOST ? true : String(p) === HOST_PIN;
 const GRACE_MS = 1500;
 
 function defState() {
@@ -23,14 +26,15 @@ function nums(o) { const r = {}; for (const k in o) r[k] = Number(o[k]) || 0; re
 
 let cache = null;
 async function load(fresh) {
-  if (!fresh && cache && Date.now() - cache.t < 700) { setQuiz(cache.d.quiz || C.RG); setContent(cache.d.content); return cache.d; }
-  const r = await store.pipeline([["GET", K.state], ["HGETALL", K.players], ["HGETALL", K.rg], ["HGETALL", K.sub], ["HGETALL", K.score], ["GET", K.quiz], ["GET", K.content]]);
+  if (!fresh && cache && Date.now() - cache.t < 700) { setQuiz(cache.d.quiz || C.RG); setContent(cache.d.content); setSetup(cache.d.setup); return cache.d; }
+  const r = await store.pipeline([["GET", K.state], ["HGETALL", K.players], ["HGETALL", K.rg], ["HGETALL", K.sub], ["HGETALL", K.score], ["GET", K.quiz], ["GET", K.content], ["HGETALL", K.rgt], ["GET", K.setup]]);
   let st = defState();
   if (r[0]) { try { st = { ...st, ...JSON.parse(r[0]) }; } catch (e) { } }
   let quiz = null; if (r[5]) { try { quiz = JSON.parse(r[5]); } catch (e) { } }
   let content = null; if (r[6]) { try { content = JSON.parse(r[6]); } catch (e) { } }
-  const d = { st, players: parseJ(toObj(r[1])), rg: toObj(r[2]), sub: parseJ(toObj(r[3])), score: nums(toObj(r[4])), quiz: Array.isArray(quiz) && quiz.length ? quiz : null, content: content && content.say ? content : null };
-  setQuiz(d.quiz || C.RG); setContent(d.content);
+  let setup = null; if (r[8]) { try { setup = JSON.parse(r[8]); } catch (e) { } }
+  const d = { st, players: parseJ(toObj(r[1])), rg: toObj(r[2]), rgt: nums(toObj(r[7])), sub: parseJ(toObj(r[3])), score: nums(toObj(r[4])), quiz: Array.isArray(quiz) && quiz.length ? quiz : null, content: content && content.say ? content : null, setup: setup && setup.name ? setup : null };
+  setQuiz(d.quiz || C.RG); setContent(d.content); setSetup(d.setup);
   cache = { t: Date.now(), d };
   return d;
 }
@@ -39,6 +43,39 @@ async function saveState(st) { st.v = (st.v || 0) + 1; await store.cmd("SET", K.
 /* ---------------- scoring ---------------- */
 // Questions can be edited live from the host page (stored in the database);
 // if nothing is stored, the defaults from lib/content.js are used.
+// Session setup (name, logo, colours, rounds, scoring) — editable from the host page.
+let SET = JSON.parse(JSON.stringify(C.SETUP)), ROUNDS = {}, ORDER = [];
+function setSetup(s) {
+  SET = s ? s : JSON.parse(JSON.stringify(C.SETUP));
+  ROUNDS = {}; ORDER = [];
+  (SET.rounds || []).forEach(r => { ROUNDS[r.key] = r; ORDER.push(r.key); });
+  if (!ORDER.length) { ROUNDS = C.ROUNDS; ORDER = Object.keys(C.ROUNDS); }
+}
+setSetup(null);
+const HEX = /^#[0-9a-fA-F]{6}$/;
+function sanitizeSetup(x) {
+  x = x || {};
+  const sc = x.scoring || {}, tm = x.timers || {}, fl = x.flag || {}, gm = x.games || {};
+  const emojis = (Array.isArray(x.emojis) ? x.emojis : []).map(e => clean(e, 8)).filter(Boolean).slice(0, 80);
+  const seen = new Set();
+  const rounds = (Array.isArray(x.rounds) ? x.rounds : []).slice(0, 30).map((r, i) => {
+    let key = String(r.key || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 12) || "R" + (i + 1);
+    while (seen.has(key)) key += "x"; seen.add(key);
+    return { key, name: clean(r.name, 40) || "Round " + (i + 1), rule: clean(r.rule, 80), level: clean(r.level, 60),
+      takeaway: clean(r.takeaway, 200), kind: ["round", "app", "bonus"].includes(r.kind) ? r.kind : "round" };
+  });
+  if (!rounds.length) throw new Error("You need at least one round.");
+  const logo = typeof x.logo === "string" && /^data:image\/(png|jpeg|webp|gif|svg\+xml);base64,/.test(x.logo) ? x.logo.slice(0, 400000) : (x.logo === "" ? "" : (SET.logo || ""));
+  return {
+    name: clean(x.name, 40) || "Arena", tagline: clean(x.tagline, 80), accent: HEX.test(x.accent) ? x.accent : "#1A9FEF", logo,
+    emojis: emojis.length >= 4 ? emojis : C.EMOJIS,
+    flag: { R: { label: clean(fl.R && fl.R.label, 24) || "Red flag", emoji: clean(fl.R && fl.R.emoji, 8) || "\uD83D\uDEA9" },
+            G: { label: clean(fl.G && fl.G.label, 24) || "Green flag", emoji: clean(fl.G && fl.G.emoji, 8) || "\u2705" } },
+    games: { say: gm.say !== false, box: gm.box !== false, boss: gm.boss !== false },
+    scoring: { base: Math.max(1, Math.min(1000, Number(sc.base) || 100)), speed: Math.max(0, Math.min(200, Number(sc.speed) ?? 50)), poll: Math.max(0, Math.min(1000, Number(sc.poll) || 0)) },
+    timers: { rg: Math.max(5, Math.min(600, Number(tm.rg) || 20)), mcq: Math.max(5, Math.min(600, Number(tm.mcq) || 30)), mcqLong: Math.max(5, Math.min(600, Number(tm.mcqLong) || 40)), text: Math.max(5, Math.min(900, Number(tm.text) || 60)) },
+    rounds };
+}
 let QUIZ = C.RG, Q = {};
 function setQuiz(list) { QUIZ = list; Q = Object.fromEntries(list.map(q => [q.id, q])); }
 setQuiz(C.RG);
@@ -87,33 +124,54 @@ function sanitizeQuiz(list) {
   if (!Array.isArray(list) || !list.length) throw new Error("No questions.");
   const seen = new Set();
   const out = list.slice(0, 200).map((q, i) => {
-    const r = C.ROUNDS[q.r] ? q.r : null; if (!r) throw new Error("Question " + (i + 1) + ": unknown round.");
-    const type = q.type === "mcq" ? "mcq" : "rg";
+    const r = ROUNDS[q.r] ? q.r : (ORDER[0] || null); if (!r) throw new Error("Question " + (i + 1) + ": unknown round.");
+    const type = ["mcq", "poll", "text", "number"].includes(q.type) ? q.type : "rg";
     const t = clean(q.t, 400); if (!t) throw new Error("Question " + (i + 1) + " is empty.");
     let opts = null, a;
-    if (type === "mcq") {
+    if (type === "mcq" || type === "poll") {
       opts = (Array.isArray(q.opts) ? q.opts : []).map(o => clean(o, 160)).filter(Boolean).slice(0, 4);
       if (opts.length < 2) throw new Error("“" + t.slice(0, 40) + "…” needs at least 2 options.");
-      a = "ABCD".slice(0, opts.length).includes(q.a) ? q.a : null; if (!a) throw new Error("“" + t.slice(0, 40) + "…” needs a correct option.");
-    } else { a = q.a === "G" ? "G" : "R"; }
+      if (type === "poll") a = null;
+      else { a = "ABCD".slice(0, opts.length).includes(q.a) ? q.a : null; if (!a) throw new Error("“" + t.slice(0, 40) + "…” needs a correct option."); }
+    } else if (type === "text") { a = null; }
+    else if (type === "number") { a = String(Number(q.a) || 0); }
+    else { a = q.a === "G" ? "G" : "R"; }
     let id = String(q.id || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24) || ("q" + Date.now().toString(36) + i);
     while (seen.has(id)) id += "x"; seen.add(id);
-    return { id, r, type, a, pts: Math.max(1, Math.min(5, Number(q.pts) || 1)), t, opts, e: clean(q.e, 500), d: clean(q.d, 300) };
+    return { id, r, type, a, pts: Math.max(1, Math.min(5, Number(q.pts) || 1)), t, opts, unit: clean(q.unit, 16), tol: Math.max(0, Number(q.tol) || 0), e: clean(q.e, 500), d: clean(q.d, 300) };
   });
-  for (const r of Object.keys(C.ROUNDS)) if (!out.some(q => q.r === r)) throw new Error("“" + C.ROUNDS[r].name + "” needs at least one question.");
   return out;
 }
+// Two factors decide the winner: how many you get right, and how fast.
+// A correct answer is worth pts x 100, plus up to half of that again for speed.
+const base = () => SET.scoring.base, speedMax = () => SET.scoring.speed / 100;
 function rgScores(d) {
-  const s = {}; for (const pid in d.players) s[pid] = 0;
+  const s = {}; for (const pid in d.players) s[pid] = { pts: 0, c: 0, arena: 0, speed: 0, ans: 0 };
   for (const f in d.rg) {
     const [qid, pid] = f.split(":");
-    if (d.st.revealed[qid] && Q[qid] && d.rg[f] === Q[qid].a && pid in s) s[pid] += (Q[qid].pts || 1);
+    if (!d.st.revealed[qid] || !Q[qid] || !(pid in s)) continue;
+    s[pid].ans++;
+    const qq = Q[qid];
+    if (qq.type === "poll") { s[pid].arena += SET.scoring.poll; continue; }
+    if (qq.type === "text") { const aw = (d.score || {})["txt:" + qid + ":" + pid] || 0; if (aw > 0) { s[pid].pts += aw; s[pid].c++; s[pid].arena += aw * base(); } continue; }
+    if (qq.type === "number" ? !numOK(qq, d.rg[f]) : d.rg[f] !== qq.a) continue;
+    const p = Q[qid].pts || 1, frac = Math.max(0, Math.min(1, (d.rgt || {})[f] ?? 0));
+    const bonus = Math.round(p * base() * speedMax() * frac);
+    s[pid].pts += p; s[pid].c++; s[pid].arena += p * base() + bonus; s[pid].speed += bonus;
   }
   return s;
 }
-function revealedCount(d) { return Object.keys(d.st.revealed).filter(k => Q[k]).reduce((n, k) => n + (Q[k].pts || 1), 0); }
-const choices = q => q.type === "mcq" ? q.opts.map((_, i) => "ABCD"[i]) : ["R", "G"];
-const autoDur = q => q.type === "mcq" ? (q.t.length > 110 ? 40 : 30) : 20;
+function arenaRows(d) {
+  const rs = rgScores(d);
+  return Object.entries(d.players).map(([id, p]) => ({ id, name: p.name, team: p.team, emoji: p.emoji, ...rs[id] }))
+    .sort((a, b) => b.arena - a.arena || b.c - a.c || a.name.localeCompare(b.name));
+}
+function revealedCount(d) { return Object.keys(d.st.revealed).filter(k => Q[k] && Q[k].type !== "poll").reduce((n, k) => n + (Q[k].pts || 1), 0); }
+const scored = q => q.type !== "poll";
+const choices = q => q.type === "rg" ? ["R", "G"] : q.type === "mcq" || q.type === "poll" ? q.opts.map((_, i) => "ABCD"[i]) : [];
+const isOpen = q => q.type === "text" || q.type === "number";
+const numOK = (q, v) => Math.abs(Number(v) - Number(q.a)) <= (q.tol || 0);
+const autoDur = q => q.type === "rg" ? SET.timers.rg : q.type === "text" ? SET.timers.text : q.type === "number" ? SET.timers.mcq : (q.t.length > 110 ? SET.timers.mcqLong : SET.timers.mcq);
 function teamTotals(d) {
   const t = {}; d.st.teams.forEach(x => t[x.id] = { say: 0, box: 0, boss: 0, total: 0 });
   for (const f in d.score) {
@@ -126,13 +184,18 @@ function teamTotals(d) {
 function individuals(d) {
   const rs = rgScores(d), possible = revealedCount(d);
   return Object.entries(d.players).map(([id, p]) => {
-    const rg = rs[id] || 0, note = d.score["ind:note:" + id] || 0, re = Math.min(5, d.score["ind:reason:" + id] || 0), pa = Math.min(5, d.score["ind:part:" + id] || 0);
-    return { id, name: p.name, team: p.team, emoji: p.emoji, rg, possible, note, re, pa, total: Math.round(((possible ? rg / possible : 0) * 40 + (note / 10) * 35 + (re / 5) * 15 + (pa / 5) * 10) * 10) / 10 };
+    const rg = (rs[id] || {}).pts || 0, note = d.score["ind:note:" + id] || 0, re = Math.min(5, d.score["ind:reason:" + id] || 0), pa = Math.min(5, d.score["ind:part:" + id] || 0);
+    return { id, name: p.name, team: p.team, emoji: p.emoji, rg, correct: (rs[id] || {}).c || 0, arena: (rs[id] || {}).arena || 0, possible, note, re, pa, total: Math.round(((possible ? rg / possible : 0) * 40 + (note / 10) * 35 + (re / 5) * 15 + (pa / 5) * 10) * 10) / 10 };
   });
 }
 function votesFor(d, qid) {
-  const c = {}; choices(Q[qid]).forEach(k => c[k] = 0); const by = {}; let n = 0;
-  for (const f in d.rg) { const [q, pid] = f.split(":"); if (q === qid && d.players[pid] && d.rg[f] in c) { c[d.rg[f]]++; by[pid] = d.rg[f]; n++; } }
+  const q0 = Q[qid], c = {}; choices(q0).forEach(k => c[k] = 0); const by = {}; let n = 0;
+  for (const f in d.rg) {
+    const [q, pid] = f.split(":"); if (q !== qid || !d.players[pid]) continue;
+    const val = d.rg[f];
+    if (isOpen(q0)) { by[pid] = val; n++; }
+    else if (val in c) { c[val]++; by[pid] = val; n++; }
+  }
   return { c, by, n };
 }
 function roundQs(r) { return QUIZ.filter(q => q.r === r); }
@@ -141,21 +204,32 @@ function roundQs(r) { return QUIZ.filter(q => q.r === r); }
 function build(d, { pid, host }) {
   const st = d.st, stg = st.stage;
   const players = Object.entries(d.players).map(([id, p]) => ({ id, name: p.name, team: p.team, emoji: p.emoji }));
-  const v = { ok: true, now: Date.now(), v: st.v, stage: stg, teams: st.teams, players, db: store.configured, timer: st.timer || null };
+  const v = { ok: true, now: Date.now(), v: st.v, stage: stg, teams: st.teams, players, db: store.configured, timer: st.timer || null, setup: SET, order: ORDER };
   let cur = null;
   if (stg.type === "rg") {
-    const qs = roundQs(stg.round), R = C.ROUNDS[stg.round] || C.ROUNDS["1"];
+    const qs = roundQs(stg.round), R = ROUNDS[stg.round] || ROUNDS[ORDER[0]];
     if (stg.phase === "summary") {
       const rs = rgScores(d);
       cur = { round: stg.round, roundName: R.name, rule: R.rule, level: R.level, kind: R.kind, takeaway: R.takeaway,
         items: qs.map(q => { const vv = votesFor(d, q.id); const ok = st.revealed[q.id]; return { t: q.t, type: q.type, a: ok ? q.a : null, pct: ok && vv.n ? Math.round((vv.c[q.a] || 0) / vv.n * 100) : null }; }),
-        top: players.map(p => ({ ...p, s: rs[p.id] || 0 })).filter(p => p.s > 0).sort((a, b) => b.s - a.s).slice(0, 5), outOf: revealedCount(d) };
+        top: players.map(p => ({ ...p, s: (rs[p.id] || {}).pts || 0, a: (rs[p.id] || {}).arena || 0 })).filter(p => p.a > 0).sort((a, b) => b.a - a.a).slice(0, 5), outOf: revealedCount(d) };
     } else {
-      const q = qs[Math.min(stg.idx || 0, qs.length - 1)] || QUIZ[0], vv = votesFor(d, q.id);
+      const q = qs[Math.min(stg.idx || 0, qs.length - 1)];
+      if (!q) cur = { round: stg.round, roundName: R.name, rule: R.rule, level: R.level, kind: R.kind, empty: true, idx: 0, total: 0 };
+      else {
+      const vv = votesFor(d, q.id);
       cur = { round: stg.round, roundName: R.name, rule: R.rule, level: R.level, kind: R.kind, idx: stg.idx || 0, total: qs.length, qid: q.id, t: q.t, type: q.type, opts: q.opts || null, pts: q.pts || 1, voted: vv.n, of: players.length };
-      if (stg.phase === "reveal") Object.assign(cur, { a: q.a, e: q.e, d: q.d, c: vv.c });
+      if (isOpen(q)) { cur.unit = q.unit || ""; cur.tol = q.tol || 0; }
+      if (stg.phase === "reveal") {
+        Object.assign(cur, { a: q.a, e: q.e, d: q.d, c: vv.c });
+        if (isOpen(q)) cur.answers = Object.entries(vv.by).map(([id, val]) => ({ id, name: d.players[id].name, emoji: d.players[id].emoji, team: d.players[id].team, v: val,
+          ok: q.type === "number" ? numOK(q, val) : ((d.score || {})["txt:" + q.id + ":" + id] || 0) > 0,
+          aw: (d.score || {})["txt:" + q.id + ":" + id] || 0,
+          off: q.type === "number" ? Math.abs(Number(val) - Number(q.a)) : 0 })).sort((x, y) => q.type === "number" ? x.off - y.off : y.aw - x.aw);
+      }
       if (stg.mic && d.players[stg.mic]) cur.mic = { name: d.players[stg.mic].name, emoji: d.players[stg.mic].emoji };
       if (host) cur.notVoted = players.filter(p => !vv.by[p.id]).map(p => p.id);
+      }
     }
   } else if (stg.type === "say") {
     const c = SAY.find(x => x.id === stg.c) || SAY[0];
@@ -182,14 +256,18 @@ function build(d, { pid, host }) {
     if (stg.phase === "reveal" || host) cur.sheets = Object.fromEntries(st.teams.map(t => [t.id, d.sub["boss:" + t.id] || null]));
   } else if (stg.type === "board") {
     const tt = teamTotals(d);
-    cur = { max: MAX, rows: st.teams.map(t => ({ tid: t.id, name: t.name, ...tt[t.id] })).sort((a, b) => b.total - a.total), winner: !!stg.winner };
+    const ar = arenaRows(d);
+    cur = { max: MAX, rows: st.teams.map(t => ({ tid: t.id, name: t.name, ...tt[t.id] })).sort((a, b) => b.total - a.total), winner: !!stg.winner,
+      mvp: !!stg.mvp, players: ar.slice(0, 8).map((x, i) => ({ ...x, rank: i + 1 })), playerCount: ar.length, outOf: revealedCount(d), qCount: QUIZ.filter(q => st.revealed[q.id] && scored(q)).length };
   }
   v.cur = cur;
 
   if (pid && d.players[pid]) {
-    const p = d.players[pid], rs = rgScores(d), mine = rs[pid] || 0;
-    const me = { id: pid, name: p.name, team: p.team, emoji: p.emoji, score: mine, outOf: revealedCount(d), rank: 1 + Object.values(rs).filter(x => x > mine).length };
-    if (stg.type === "rg" && cur && cur.qid) { me.vote = d.rg[cur.qid + ":" + pid] || null; if (stg.phase === "reveal") me.correct = me.vote === cur.a; }
+    const p = d.players[pid], rs = rgScores(d), mine = rs[pid] || { pts: 0, c: 0, arena: 0, speed: 0, ans: 0 };
+    const me = { id: pid, name: p.name, team: p.team, emoji: p.emoji, score: mine.pts, correct: mine.c, arena: mine.arena, speed: mine.speed, answered: mine.ans,
+      outOf: revealedCount(d), qCount: QUIZ.filter(q => d.st.revealed[q.id] && scored(q)).length,
+      rank: 1 + Object.values(rs).filter(x => x.arena > mine.arena).length, of: Object.keys(d.players).length };
+    if (stg.type === "rg" && cur && cur.qid) { me.vote = d.rg[cur.qid + ":" + pid] || null; if (stg.phase === "reveal") { const qq = Q[cur.qid]; me.right = qq.type === "number" ? (me.vote != null && me.vote !== "" && numOK(qq, me.vote)) : qq.type === "text" ? ((d.score || {})["txt:" + cur.qid + ":" + pid] || 0) > 0 : (!!cur.a && me.vote === cur.a); if (me.right) { const p = Q[cur.qid].pts || 1; me.gain = p * base() + Math.round(p * base() * speedMax() * Math.max(0, Math.min(1, (d.rgt || {})[cur.qid + ":" + pid] ?? 0))); } } }
     if (stg.type === "say") me.teamSub = d.sub["say:" + cur.id + ":" + p.team] || null;
     if (stg.type === "box") { me.box = st.boxAssign[p.team] || null; me.teamSub = d.sub["box:" + p.team] || null; }
     if (stg.type === "boss") { me.teamSub = d.sub["boss:" + p.team] || null; me.note = d.sub["note:" + pid] || null; }
@@ -198,10 +276,10 @@ function build(d, { pid, host }) {
 
   if (host) {
     v.host = { individuals: individuals(d), teamTotals: teamTotals(d), score: d.score, rubric: { say: C.SAY_RUBRIC, box: C.BOX_RUBRIC, boss: BOSS_Q.map(q => q[2]) }, max: MAX,
-      content: { say: SAY, boxes: BOXES, boss: { case: BOSS_CASE, qs: BOSS_Q, drop: DROP } }, customContent: !!d.content,
+      content: { say: SAY, boxes: BOXES, boss: { case: BOSS_CASE, qs: BOSS_Q, drop: DROP } }, customContent: !!d.content, customSetup: !!d.setup,
       notes: Object.fromEntries(Object.keys(d.sub).filter(k => k.startsWith("note:")).map(k => [k.slice(5), d.sub[k].text])),
-      rounds: C.ROUNDS, quiz: QUIZ, customQuiz: !!d.quiz, says: SAY.map(s => s.id), rgTotal: revealedCount(d),
-      roundLens: Object.fromEntries(Object.keys(C.ROUNDS).map(r => [r, roundQs(r).length])) };
+      rounds: ROUNDS, quiz: QUIZ, customQuiz: !!d.quiz, says: SAY.map(s => s.id), rgTotal: revealedCount(d),
+      roundLens: Object.fromEntries(ORDER.map(r => [r, roundQs(r).length])) };
     if (stg.type === "rg" && cur && cur.qid) { const q = Q[cur.qid]; cur.a = q.a; cur.e = q.e; cur.d = q.d; cur.c = votesFor(d, q.id).c; }
   }
   return v;
@@ -224,9 +302,9 @@ module.exports = async function handler(req, res) {
     const url = new URL(req.url, "http://x");
     if (req.method === "GET") {
       const pin = url.searchParams.get("pin");
-      if (pin != null && pin !== HOST_PIN) return send(res, 403, { ok: false, error: "pin" });
+      if (pin != null && !pinOK(pin)) return send(res, 403, { ok: false, error: "pin" });
       const d = await load(false);
-      return send(res, 200, build(d, { pid: url.searchParams.get("pid"), host: pin === HOST_PIN }));
+      return send(res, 200, build(d, { pid: url.searchParams.get("pid"), host: pin != null }));
     }
     if (req.method !== "POST") return send(res, 405, { ok: false });
     const b = await readBody(req);
@@ -237,7 +315,7 @@ module.exports = async function handler(req, res) {
       const name = clean(b.name, 24); const team = d.st.teams.find(t => t.id === b.team) ? b.team : null;
       if (!name || !team) return send(res, 400, { ok: false, message: "Write your name and pick a team." });
       const pid = b.pid && d.players[b.pid] ? b.pid : Math.random().toString(36).slice(2, 10);
-      const emoji = C.EMOJIS.includes(b.emoji) ? b.emoji : C.EMOJIS[0];
+      const emoji = (SET.emojis || C.EMOJIS).includes(b.emoji) ? b.emoji : (SET.emojis || C.EMOJIS)[0];
       await store.cmd("HSET", K.players, pid, JSON.stringify({ name, team, emoji, t: now }));
       cache = null;
       return send(res, 200, { ok: true, pid });
@@ -249,8 +327,13 @@ module.exports = async function handler(req, res) {
       if (stg.type !== "rg" || stg.phase !== "vote" || !open(stg, now)) return send(res, 409, { ok: false, message: "Voting is closed." });
       if (stg.startsAt && now < stg.startsAt - 400) return send(res, 409, { ok: false, message: "Get ready…" });
       const q = roundQs(stg.round)[stg.idx || 0];
-      if (!q || q.id !== b.qid || !choices(q).includes(b.v)) return send(res, 409, { ok: false, message: "That statement is over." });
-      await store.cmd("HSET", K.rg, q.id + ":" + b.pid, b.v); cache = null;
+      if (!q || q.id !== b.qid) return send(res, 409, { ok: false, message: "That statement is over." });
+      if (q.type === "text") { b.v = clean(b.v, 300); if (!b.v) return send(res, 400, { ok: false, message: "Write something first." }); }
+      else if (q.type === "number") { if (b.v === "" || b.v == null || isNaN(Number(b.v))) return send(res, 400, { ok: false, message: "Write a number." }); b.v = String(Number(b.v)); }
+      else if (!choices(q).includes(b.v)) return send(res, 409, { ok: false, message: "That statement is over." });
+      let frac = 0;
+      if (stg.endsAt && stg.startsAt && stg.endsAt > stg.startsAt) frac = Math.max(0, Math.min(1, (stg.endsAt - now) / (stg.endsAt - stg.startsAt)));
+      await store.pipeline([["HSET", K.rg, q.id + ":" + b.pid, b.v], ["HSET", K.rgt, q.id + ":" + b.pid, String(Math.round(frac * 1000) / 1000)]]); cache = null;
       return send(res, 200, { ok: true });
     }
 
@@ -261,7 +344,7 @@ module.exports = async function handler(req, res) {
       let key, val; const x = b.data || {};
       if (stg.type === "say" && stg.phase === "answer") { key = "say:" + stg.c + ":" + p.team; val = { text: clean(x.text, 300), by: p.name }; }
       else if (stg.type === "box" && stg.phase === "answer") {
-        const bid = d.st.boxAssign[p.team]; const box = C.BOXES.find(y => y.id === bid); if (!box) return send(res, 409, { ok: false, message: "Your team has no box yet." });
+        const bid = d.st.boxAssign[p.team]; const box = BOXES.find(y => y.id === bid); if (!box) return send(res, 409, { ok: false, message: "Your team has no box yet." });
         const okm = m => box.metrics.includes(m) ? m : null;
         key = "box:" + p.team; val = { box: bid, primary: okm(x.primary), secondary: okm(x.secondary), diag: (Array.isArray(x.diag) ? x.diag : []).map(okm).filter(Boolean).slice(0, 6), why: clean(x.why, 300), by: p.name };
       }
@@ -273,7 +356,7 @@ module.exports = async function handler(req, res) {
     }
 
     if (b.a === "host") {
-      if (String(b.pin) !== HOST_PIN) return send(res, 403, { ok: false, error: "pin" });
+      if (!pinOK(b.pin)) return send(res, 403, { ok: false, error: "pin" });
       const d = await load(true); const st = d.st;
       const op = b.op;
       if (op === "stage") {
@@ -289,6 +372,8 @@ module.exports = async function handler(req, res) {
       else if (op === "quizSave") { const list = sanitizeQuiz(b.quiz); await store.cmd("SET", K.quiz, JSON.stringify(list)); cache = null; return send(res, 200, { ok: true, count: list.length }); }
       else if (op === "contentSave") { const c = sanitizeContent(b.content); await store.cmd("SET", K.content, JSON.stringify(c)); cache = null; return send(res, 200, { ok: true }); }
       else if (op === "contentReset") { await store.cmd("DEL", K.content); cache = null; }
+      else if (op === "setupSave") { const x = sanitizeSetup(b.setup); await store.cmd("SET", K.setup, JSON.stringify(x)); cache = null; return send(res, 200, { ok: true }); }
+      else if (op === "setupReset") { await store.cmd("DEL", K.setup); cache = null; }
       else if (op === "bigTimer") { st.timer = b.dur ? { label: clean(b.label, 60), startsAt: now, endsAt: now + Number(b.dur) * 1000 } : null; await saveState(st); }
       else if (op === "quizReset") { await store.cmd("DEL", K.quiz); cache = null; }
       else if (op === "teamCount") {
@@ -299,13 +384,13 @@ module.exports = async function handler(req, res) {
         if (moves.length) await store.cmd("HSET", K.players, ...moves);
         st.boxAssign = {}; await saveState(st);
       }
-      else if (op === "boxDraw") { const ids = shuffle(C.BOXES.map(x => x.id)); st.boxAssign = {}; st.teams.forEach((t, i) => { if (i && i % ids.length === 0) ids.push(...shuffle(ids.splice(0))); st.boxAssign[t.id] = ids[i % ids.length]; }); await saveState(st); }
+      else if (op === "boxDraw") { const ids = shuffle(BOXES.map(x => x.id)); st.boxAssign = {}; st.teams.forEach((t, i) => { if (i && i % ids.length === 0) ids.push(...shuffle(ids.splice(0))); st.boxAssign[t.id] = ids[i % ids.length]; }); await saveState(st); }
       else if (op === "score") { const pairs = Object.entries(b.scores || {}).flatMap(([k, v]) => [k, Number(v) || 0]); if (pairs.length) await store.cmd("HSET", K.score, ...pairs); cache = null; }
       else if (op === "move") { const p = d.players[b.pid]; if (p && st.teams.find(t => t.id === b.team)) { p.team = b.team; await store.cmd("HSET", K.players, b.pid, JSON.stringify(p)); cache = null; } }
       else if (op === "kick") { await store.cmd("HDEL", K.players, b.pid); cache = null; }
       else if (op === "reset") {
-        if (b.all) await store.cmd("DEL", K.state, K.players, K.rg, K.sub, K.score);
-        else { await store.cmd("DEL", K.rg, K.sub, K.score); st.revealed = {}; st.boxAssign = {}; st.stage = { type: "lobby" }; await saveState(st); }
+        if (b.all) await store.cmd("DEL", K.state, K.players, K.rg, K.rgt, K.sub, K.score);
+        else { await store.cmd("DEL", K.rg, K.rgt, K.sub, K.score); st.revealed = {}; st.boxAssign = {}; st.stage = { type: "lobby" }; await saveState(st); }
         cache = null;
       } else return send(res, 400, { ok: false });
       return send(res, 200, { ok: true });
