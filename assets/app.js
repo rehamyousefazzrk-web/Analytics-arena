@@ -9,6 +9,12 @@ const ls = { get(k, d) { try { const v = localStorage.getItem(k); return v == nu
 let V = null, offset = 0, lastSig = "", lastDockSig = "", busy = false;
 let pid = ls.get("mc-pid", null);
 let pin = ls.get("mc-pin", null);
+(function () { // a trainer link like /host?k=2580 signs you in once, then the code disappears from the address bar
+  try {
+    const u = new URL(location.href), k = u.searchParams.get("k") || u.searchParams.get("pin");
+    if (k) { pin = k; ls.set("mc-pin", k); u.searchParams.delete("k"); u.searchParams.delete("pin"); history.replaceState(null, "", u.pathname + u.search + u.hash); }
+  } catch (e) {}
+})();
 const drafts = ls.get("mc-drafts", {});
 const now = () => Date.now() + offset;
 const teamOf = id => (V && V.teams.find(t => t.id === id)) || { id, name: id };
@@ -22,12 +28,13 @@ async function api(method, body, qs = "") {
   return j;
 }
 async function refresh() {
-  if (ROLE === "host" && !pin) return; // wait until the trainer types the PIN
+  if (ROLE === "host" && !pin) { if (triedOpen) return; triedOpen = true; pin = "none"; }  // try a password-free trainer page first
   if (busy) return; busy = true;
   try {
     const qs = ROLE === "host" ? "?pin=" + encodeURIComponent(pin || "") : ROLE === "player" && pid ? "?pid=" + encodeURIComponent(pid) : "";
     const j = await api("GET", null, qs);
     offset = j.now - Date.now(); V = j; hideError();
+    if (ROLE === "host" && pin) ls.set("mc-pin", pin);
     if (ROLE === "player" && pid && j.me === null) { pid = null; ls.set("mc-pid", null); }
     render();
   } catch (e) {
@@ -103,13 +110,88 @@ function confetti(n = 160) {
   let f = 0; (function step() { x.clearRect(0, 0, c.width, c.height); P.forEach(p => { p.x += p.vx; p.y += p.vy; p.vy += .05; p.r += .1; x.save(); x.translate(p.x, p.y); x.rotate(p.r); x.fillStyle = p.c; x.fillRect(-p.s / 2, -p.s / 4, p.s, p.s / 2); x.restore(); }); if (++f < 240) requestAnimationFrame(step); else x.clearRect(0, 0, c.width, c.height); })();
 }
 
+/* fireworks — big finish for the winner reveal */
+let fwStop = 0;
+function fireworks(ms = 9000) {
+  let c = $("#confetti"); if (!c) { c = document.createElement("canvas"); c.id = "confetti"; document.body.appendChild(c); }
+  const x = c.getContext("2d"); c.width = innerWidth; c.height = innerHeight;
+  const cols = ["#3D8FD1", "#8CCBEB", "#E6F6FF", "#1FCB6A", "#FFC23D", "#FF6B6B", "#C77DFF"];
+  const P = []; const end = performance.now() + ms; fwStop = end;
+  const burst = () => {
+    const bx = c.width * (.12 + Math.random() * .76), by = c.height * (.12 + Math.random() * .45);
+    const col = cols[Math.floor(Math.random() * cols.length)], n = 46 + Math.floor(Math.random() * 30), sp = 3 + Math.random() * 3.6;
+    for (let i = 0; i < n; i++) { const a = Math.PI * 2 * i / n + Math.random() * .2, v = sp * (.55 + Math.random() * .75);
+      P.push({ x: bx, y: by, vx: Math.cos(a) * v, vy: Math.sin(a) * v, life: 1, c: Math.random() < .18 ? "#fff" : col, s: 1.6 + Math.random() * 2.2 }); }
+    boom();
+  };
+  burst(); setTimeout(burst, 260); setTimeout(burst, 520);
+  const iv = setInterval(() => { if (performance.now() > end) return clearInterval(iv); burst(); }, 520);
+  (function step(t) {
+    x.globalCompositeOperation = "source-over"; x.fillStyle = "rgba(6,18,31,.22)"; x.fillRect(0, 0, c.width, c.height);
+    x.globalCompositeOperation = "lighter";
+    for (let i = P.length - 1; i >= 0; i--) { const p = P[i];
+      p.x += p.vx; p.y += p.vy; p.vy += .045; p.vx *= .988; p.vy *= .988; p.life -= .0125;
+      if (p.life <= 0) { P.splice(i, 1); continue; }
+      x.globalAlpha = Math.max(0, p.life); x.fillStyle = p.c; x.beginPath(); x.arc(p.x, p.y, p.s, 0, 7); x.fill(); }
+    x.globalAlpha = 1;
+    if (performance.now() < fwStop || P.length) requestAnimationFrame(step);
+    else { x.globalCompositeOperation = "source-over"; x.clearRect(0, 0, c.width, c.height); }
+  })();
+}
+function boom() {
+  if (!soundOn) return;
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    const t = AC.currentTime, len = 1.1, buf = AC.createBuffer(1, AC.sampleRate * len, AC.sampleRate), ch = buf.getChannelData(0);
+    for (let i = 0; i < ch.length; i++) ch[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / ch.length, 3);
+    const src = AC.createBufferSource(); src.buffer = buf;
+    const f = AC.createBiquadFilter(); f.type = "lowpass"; f.frequency.setValueAtTime(1600, t); f.frequency.exponentialRampToValueAtTime(180, t + len);
+    const g = AC.createGain(); g.gain.setValueAtTime(.22, t); g.gain.exponentialRampToValueAtTime(.001, t + len);
+    src.connect(f); f.connect(g); g.connect(AC.destination); src.start(t); src.stop(t + len);
+  } catch (e) {}
+}
+function fanfare() {
+  if (!soundOn) return;
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    const seq = [[523, 0, .16], [659, .16, .16], [784, .32, .16], [1047, .48, .34], [784, .86, .16], [1047, 1.02, .7], [1319, 1.02, .7]];
+    seq.forEach(([fq, d, len]) => {
+      const o = AC.createOscillator(), o2 = AC.createOscillator(), g = AC.createGain();
+      o.type = "triangle"; o2.type = "sawtooth"; o.frequency.value = fq; o2.frequency.value = fq * 2;
+      const t = AC.currentTime + d; g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(.13, t + .02); g.gain.exponentialRampToValueAtTime(.001, t + len);
+      o.connect(g); o2.connect(g); g.connect(AC.destination); o.start(t); o2.start(t); o.stop(t + len + .03); o2.stop(t + len + .03);
+    });
+  } catch (e) {}
+}
+
 /* drafts keep what people type safe across re-renders */
 document.addEventListener("input", e => { const el = e.target; if (el.dataset.draft) { drafts[el.dataset.draft] = el.value; ls.set("mc-drafts", drafts); } });
 function draft(key, fallback) { return drafts[key] ?? fallback ?? ""; }
 function typing() { const a = document.activeElement; return a && /INPUT|TEXTAREA|SELECT/.test(a.tagName); }
 
+const nfmt = n => (n || 0).toLocaleString("en-US");
+
+/* ---- session setup (name, logo, colours, rounds) ---- */
+const SETUP = () => (V && V.setup) || { name: "Arena", tagline: "", accent: "#1A9FEF", logo: "", emojis: EMOJIS, flag: { R: { label: "Red flag", emoji: "\u{1F6A9}" }, G: { label: "Green flag", emoji: "\u2705" } }, games: { say: 1, box: 1, boss: 1 }, rounds: [], scoring: { base: 100, speed: 50, poll: 0 }, timers: { rg: 20, mcq: 30, mcqLong: 40 } };
+const emojiSet = () => { const e = SETUP().emojis; return e && e.length ? e : EMOJIS; };
+const logoSrc = () => SETUP().logo || "/assets/logo.png";
+function brandHTML(sub) {
+  const n = String(SETUP().name || "Arena").trim().split(/\s+/);
+  const first = esc(n.slice(0, -1).join(" ") || n[0]), last = n.length > 1 ? esc(n[n.length - 1]) : "";
+  return `<div class="logo"><img src="${logoSrc()}" alt="" onerror="this.remove()"><i></i><span>${sub ? esc(sub) : first + (last ? " <b>" + last + "</b>" : "")}</span></div>`;
+}
+let brandSig = "";
+function applyBrand() {
+  const st = SETUP(), sig = st.accent + "|" + st.name + "|" + (st.logo || "").length;
+  if (sig === brandSig) return; brandSig = sig;
+  document.documentElement.style.setProperty("--brand", st.accent);
+  try { const c = st.accent.match(/\w\w/g).map(x => parseInt(x, 16)); document.documentElement.style.setProperty("--sky", `rgb(${Math.min(255, c[0] + 60)},${Math.min(255, c[1] + 50)},${Math.min(255, c[2] + 20)})`); } catch (e) {}
+  document.title = st.name + (ROLE === "host" ? " · Trainer" : ROLE === "screen" ? " · Screen" : "");
+  if (st.logo) { let l = document.querySelector("link[rel=icon]"); if (!l) { l = document.createElement("link"); l.rel = "icon"; document.head.appendChild(l); } l.href = st.logo; }
+}
+const flagOf = k => { const f = SETUP().flag || {}; const x = f[k] || {}; return { label: x.label || (k === "R" ? "Red flag" : "Green flag"), emoji: x.emoji || (k === "R" ? "\u{1F6A9}" : "\u2705") }; };
 const SHAPES = { A: "▲", B: "◆", C: "●", D: "■" };
-function ansLabel(c) { if (c.type === "mcq") { const i = "ABCD".indexOf(c.a); return `${SHAPES[c.a]} ${c.a}) ${esc(c.opts[i])}`; } return c.a === "R" ? "🚩 Red flag" : "✅ Green flag"; }
+function ansLabel(c) { if (c.type === "number") return `${esc(c.a)}${c.unit ? " " + esc(c.unit) : ""}${c.tol ? " (±" + c.tol + ")" : ""}`; if (c.type === "text") return "open answer"; if (c.type !== "rg") { const i = "ABCD".indexOf(c.a); return `${SHAPES[c.a]} ${c.a}) ${esc(c.opts[i])}`; } const f = flagOf(c.a); return `${f.emoji} ${esc(f.label)}`; }
 const ptsTxt = n => n + (n > 1 ? " points" : " point");
 const inCountdown = st => st && st.type === "rg" && st.phase === "vote" && st.startsAt && now() < st.startsAt;
 function levelTitle(c) {
@@ -136,7 +218,8 @@ function patHTML(p) { return p.map(([n, d]) => `${esc(n)} <span class="${d === "
 /* =====================================================================
    PLAYER
    ===================================================================== */
-let join = { team: null, emoji: ls.get("mc-emoji", EMOJIS[Math.floor(Math.random() * EMOJIS.length)]) };
+let triedOpen = false;
+let join = { team: null, emoji: ls.get("mc-emoji", "") };
 let lastResultQ = null, editing = false;
 function renderPlayer() {
   const app = $("#app");
@@ -149,7 +232,7 @@ function renderPlayer() {
   if (typing() && prev && prev.type === stg.type && prev.phase === stg.phase) return;
   lastSig = sig;
   const head = bigTimerHTML(true) + `<header><div class="me-badge tcol" data-t="${me.team}"><span class="em">${esc(me.emoji)}</span>${esc(me.name)} · ${tname(me.team)}</div>
-    <div class="score-badge">⭐ ${me.score}</div></header>`;
+    <div class="score-badge" title="Arena points">⚡ ${nfmt(me.arena)}</div></header>`;
   let body = "";
   const t = stg.type, ph = stg.phase;
   if (t === "lobby") {
@@ -159,31 +242,40 @@ function renderPlayer() {
       <button class="btn ghost sm" style="margin-top:18px" data-act="rejoin">Change name or team</button></div>`;
   } else if (t === "rg" && ph === "summary") {
     body = `<div class="pcard wait"><span class="em">🏁</span><h2 class="disp bigtitle">${esc(cur.roundName)} done</h2>
-      <div class="stats3" style="margin-top:16px"><div><span class="eyebrow">Your score</span><b>${me.score}/${me.outOf}</b></div><div><span class="eyebrow">Your rank</span><b>#${me.rank}</b></div></div>
+      <div class="stats3" style="margin-top:16px"><div><span class="eyebrow">Correct</span><b>${me.correct}/${me.qCount}</b></div><div><span class="eyebrow">Points</span><b>${nfmt(me.arena)}</b></div><div><span class="eyebrow">Rank</span><b>#${me.rank} of ${me.of}</b></div></div>
       <p class="muted" style="margin-top:14px">${esc(cur.takeaway)}</p></div>`;
   } else if (t === "rg") {
     if (ph === "reveal") {
-      const cls = !me.vote ? "none" : me.correct ? "ok" : "no";
-      body = `<div class="splash ${cls}"><div class="disp">${!me.vote ? "No vote" : me.correct ? "Correct!" : "Not this time"}</div>
-        <p>${me.correct ? "+" + ptsTxt(cur.pts) + " ⭐" : !me.vote ? "You didn't vote on this one." : "Listen to the explanation 👀"}</p></div>
-        <div class="pcard"><div class="eyebrow">Answer</div><p style="margin:4px 0 0;font-weight:700;font-size:18px">${ansLabel(cur)}</p><p style="margin:8px 0 0;font-size:18px">${esc(cur.e)}</p></div>
-        <div class="stats3"><div><span class="eyebrow">Score</span><b>${me.score}/${me.outOf}</b></div><div><span class="eyebrow">Rank</span><b>#${me.rank}</b></div></div>`;
-      if (lastResultQ !== cur.qid) { lastResultQ = cur.qid; if (me.correct) { confetti(90); navigator.vibrate && navigator.vibrate(60); } else if (me.vote) navigator.vibrate && navigator.vibrate([40, 60, 40]); }
+      const poll = cur.type === "poll", txt = cur.type === "text";
+      const cls = poll || (txt && !me.right) ? "none" : !me.vote ? "none" : me.right ? "ok" : "no";
+      body = `<div class="splash ${cls}"><div class="disp">${poll ? "Thanks!" : txt && !me.right ? "Answer sent" : !me.vote ? "No vote" : me.right ? "Correct!" : "Not this time"}</div>
+        <p>${poll ? "Results are on the screen." : me.right ? "+" + nfmt(me.gain) + " points" + (me.gain > cur.pts * SETUP().scoring.base ? " ⚡ speed bonus" : "") : !me.vote ? "You didn't vote on this one." : txt ? "Answers are on the screen 👀" : "Listen to the explanation 👀"}</p></div>
+        ${poll || txt ? (cur.e ? `<div class="pcard"><p style="margin:0;font-size:18px">${esc(cur.e)}</p></div>` : "") : `<div class="pcard"><div class="eyebrow">Answer</div><p style="margin:4px 0 0;font-weight:700;font-size:18px">${ansLabel(cur)}</p><p style="margin:8px 0 0;font-size:18px">${esc(cur.e)}</p></div>`}
+        <div class="stats3"><div><span class="eyebrow">Correct</span><b>${me.correct}/${me.qCount}</b></div><div><span class="eyebrow">Points</span><b>${nfmt(me.arena)}</b></div><div><span class="eyebrow">Rank</span><b>#${me.rank}</b></div></div>`;
+      if (lastResultQ !== cur.qid) { lastResultQ = cur.qid; if (me.right) { confetti(90); navigator.vibrate && navigator.vibrate(60); } else if (me.vote) navigator.vibrate && navigator.vibrate([40, 60, 40]); }
     } else if (inCountdown(stg)) {
       body = `<div class="pcard">${countdownHTML(cur, stg, true)}</div>`;
     } else {
       const closed = timeUp(stg);
       const onoff = k => me.vote === k ? "on" : me.vote ? "off" : "";
-      const btns = cur.type === "mcq"
+      const open = cur.type === "text" || cur.type === "number";
+      const dkey = "ans:" + cur.qid;
+      const btns = open
+        ? (cur.type === "number"
+          ? `<div class="field"><input class="input big" id="f-ans" type="number" step="any" inputmode="decimal" data-draft="${dkey}" value="${esc(draft(dkey, me.vote))}" placeholder="Your number${cur.unit ? " (" + esc(cur.unit) + ")" : ""}" ${closed ? "disabled" : ""}></div>`
+          : `<div class="field"><textarea class="input" id="f-ans" data-draft="${dkey}" dir="auto" maxlength="300" placeholder="Your answer…" ${closed ? "disabled" : ""}>${esc(draft(dkey, me.vote))}</textarea></div>`)
+          + `<button class="btn red cta" style="margin-top:10px" data-act="sendAns" ${closed ? "disabled" : ""}>${me.vote ? "Update my answer" : "Send my answer"}</button>
+             ${me.vote ? `<p class="saved">✓ Sent — you can still change it</p>` : ""}`
+        : cur.type !== "rg"
         ? `<div class="mcq">${cur.opts.map((o, i) => { const k = "ABCD"[i]; return `<button class="opt o${k} ${onoff(k)}" data-act="vote" data-v="${k}" ${closed ? "disabled" : ""}><span class="sh">${SHAPES[k]}</span><span>${esc(o)}</span></button>`; }).join("")}</div>`
         : `<div class="votebtns">
-          <button class="vote r ${onoff("R")}" data-act="vote" data-v="R" ${closed ? "disabled" : ""}>🚩 Red flag</button>
-          <button class="vote g ${onoff("G")}" data-act="vote" data-v="G" ${closed ? "disabled" : ""}>✅ Green flag</button>
+          <button class="vote r ${onoff("R")}" data-act="vote" data-v="R" ${closed ? "disabled" : ""}>${flagOf("R").emoji} ${esc(flagOf("R").label)}</button>
+          <button class="vote g ${onoff("G")}" data-act="vote" data-v="G" ${closed ? "disabled" : ""}>${flagOf("G").emoji} ${esc(flagOf("G").label)}</button>
         </div>`;
       body = `<div class="eyebrow">${esc(cur.roundName)} · ${cur.idx + 1}/${cur.total}${cur.pts > 1 ? " · " + ptsTxt(cur.pts) : ""}</div>
         <p class="pstatement">${esc(cur.t)}</p>${tbar(stg)}
         ${btns}
-        <p class="lock">${closed ? "⏰ Time's up" : me.vote ? "🔒 Locked in — tap the other one to change" : "Tap your answer"}</p>`;
+        ${open ? "" : `<p class="lock">${closed ? "⏰ Time's up" : me.vote ? "🔒 Locked in — tap the other one to change" : "Tap your answer"}</p>`}`;
     }
   } else if (t === "say") {
     if (ph === "reveal") body = waitCard("👀", "Eyes on the screen", "Let's see what every team wrote.");
@@ -212,7 +304,12 @@ function renderPlayer() {
     else if (ph === "reveal") body = waitCard("👾", `Boss HP: ${V.cur.hp}%`, "Every good answer hits the boss. Watch the screen!");
     else body = waitCard("⚔️", "Boss fight incoming", "Read the case on the screen.");
   } else if (t === "board") {
-    body = stg.winner ? waitCard("🏆", "Winner on screen!", `Your final Red/Green score: ${me.score}/${me.outOf}`) : waitCard("📊", "Scoreboard", "Eyes on the screen…");
+    const podium = me.rank <= 3 && me.arena > 0;
+    body = `<div class="pcard wait ${podium && stg.mvp ? "gold" : ""}"><span class="em">${stg.mvp ? (podium ? ["🥇", "🥈", "🥉"][me.rank - 1] : "👑") : stg.winner ? "🏆" : "📊"}</span>
+      <h2 class="disp bigtitle">${stg.mvp ? (podium ? "You're on the podium!" : "Your final result") : stg.winner ? "Winner on screen!" : "Scoreboard"}</h2>
+      <div class="stats3" style="margin-top:16px"><div><span class="eyebrow">Correct</span><b>${me.correct}/${me.qCount}</b></div><div><span class="eyebrow">Points</span><b>${nfmt(me.arena)}</b></div><div><span class="eyebrow">Rank</span><b>#${me.rank} of ${me.of}</b></div></div>
+      <p class="muted" style="margin-top:14px">⚡ ${nfmt(me.speed)} of your points came from answering fast.</p></div>`;
+    if (stg.mvp && lastResultQ !== "mvp") { lastResultQ = "mvp"; if (podium) { confetti(140); navigator.vibrate && navigator.vibrate([60, 60, 120]); } }
   }
   app.innerHTML = `<div class="phone">${head}${body}</div>`;
   tickTimers();
@@ -252,14 +349,16 @@ function bossForm(me) {
 }
 function renderJoin(app) {
   if (lastSig === "join" && typing()) return;
+  const set = emojiSet();
+  if (!join.emoji || !set.includes(join.emoji)) join.emoji = set[Math.floor(Math.random() * set.length)];
   lastSig = "join";
   const teams = V.teams;
   const nm = draft("join:name", ls.get("mc-name", ""));
-  app.innerHTML = `<div class="phone"><header><div class="logo"><img src="/assets/logo.png" alt="" onerror="this.remove()"><i></i><span>Analytics <b>Arena</b></span></div></header>
-   <img class="pmascot" src="/assets/logo.png" alt="" onerror="this.remove()"><div class="pcard"><h2 class="disp bigtitle">Join the game</h2><p class="muted">Red flag or green flag? Let's see how you read the numbers.</p>
+  app.innerHTML = `<div class="phone"><header>${brandHTML()}</header>
+   <img class="pmascot" src="${logoSrc()}" alt="" onerror="this.remove()"><div class="pcard"><h2 class="disp bigtitle">Join the game</h2><p class="muted">${esc(SETUP().tagline || "Name, team, go.")}</p>
     <div class="field" style="margin-top:14px"><label for="f-name">Your name</label><input class="input" id="f-name" data-draft="join:name" maxlength="24" autocomplete="given-name" value="${esc(nm)}" placeholder="e.g. Sara"></div>
     <div class="field" style="margin-top:16px"><label>Your team</label><div class="teampick">${teams.map(t => `<button class="tcol" data-t="${t.id}" data-act="team" data-id="${t.id}" aria-pressed="${join.team === t.id}">${esc(t.name)}<br><small class="mono" style="font-weight:500">${V.players.filter(p => p.team === t.id).length} in</small></button>`).join("")}</div></div>
-    <div class="field" style="margin-top:16px"><label>Pick your avatar</label><div class="emojis">${EMOJIS.map(e => `<button data-act="emoji" data-e="${e}" aria-pressed="${join.emoji === e}">${e}</button>`).join("")}</div></div>
+    <div class="field" style="margin-top:16px"><label>Pick your avatar</label><div class="emojis">${emojiSet().map(e => `<button data-act="emoji" data-e="${e}" aria-pressed="${join.emoji === e}">${e}</button>`).join("")}</div></div>
     <button class="btn red cta" style="margin-top:20px" data-act="join">Join ▶</button></div></div>`;
 }
 async function playerAct(a, d) {
@@ -274,6 +373,13 @@ async function playerAct(a, d) {
   }
   else if (a === "rejoin") { join.team = V.me.team; join.emoji = V.me.emoji; drafts["join:name"] = V.me.name; editing = true; lastSig = ""; render(); }
   else if (a === "vote") { if (navigator.vibrate) navigator.vibrate(25); V.me.vote = d.v; lastSig = ""; renderPlayer(); await post({ a: "vote", pid, qid: V.cur.qid, v: d.v }); }
+  else if (a === "sendAns") {
+    const el = $("#f-ans"); if (!el) return;
+    const val = (el.value || "").trim();
+    if (!val) return toast(V.cur.type === "number" ? "Write a number first" : "Write your answer first");
+    V.me.vote = val; lastSig = ""; renderPlayer();
+    await post({ a: "vote", pid, qid: V.cur.qid, v: val }, "Answer sent ✓");
+  }
   else if (a === "submitSay") { const text = $("#f-say").value.trim(); if (!text) return toast("Write one sentence first"); await post({ a: "submit", pid, data: { text } }, "Team answer sent ✓"); }
   else if (a === "pick") {
     if (d.f === "diag") { const i = boxPick.diag.indexOf(d.m); i >= 0 ? boxPick.diag.splice(i, 1) : boxPick.diag.push(d.m); }
@@ -295,29 +401,39 @@ async function playerAct(a, d) {
 let prevPlayers = 0, prevPhaseKey = "", prevHP = null;
 function screenHTML() {
   const s = V.stage, c = V.cur, t = s.type, ph = s.phase;
-  const top = bigTimerHTML(false) + `<div class="sbar"><div class="logo"><img src="/assets/logo.png" alt="" onerror="this.remove()"><i></i><span>Analytics <b>Arena</b></span></div><div class="count">👥 ${V.players.length} players</div></div>`;
+  const top = bigTimerHTML(false) + `<div class="sbar">${brandHTML()}<div class="count">👥 ${V.players.length} players</div></div>`;
   let h = "";
   if (t === "lobby") {
     const url = location.origin.replace(/^https?:\/\//, "");
     h = `<div class="joinbox"><div class="qr" id="qr"></div><div><div class="eyebrow">Join on your phone</div><div class="url">${esc(url)}</div>
-      <p class="sh2 disp" style="margin:.4em 0 0">Name · team · go</p></div><img class="mascot" src="/assets/logo.png" alt="" onerror="this.remove()"></div>
+      <p class="sh2 disp" style="margin:.4em 0 0">Name · team · go</p></div><img class="mascot" src="${logoSrc()}" alt="" onerror="this.remove()"></div>
       <div class="teams">${V.teams.map(tm => { const ps = V.players.filter(p => p.team === tm.id); return `<div class="team tcol" data-t="${tm.id}"><h3 class="disp">${esc(tm.name)} <span class="mono muted" style="font-size:.6em">${ps.length}</span></h3><div class="pl">${ps.map(p => `<span>${esc(p.emoji)} ${esc(p.name)}</span>`).join("")}</div></div>`; }).join("")}</div>`;
   } else if (t === "rg" && ph === "summary") {
     h = `<div class="eyebrow">${esc(c.roundName)} · ${esc(c.level)}</div><div class="summary"><div>${c.items.map(it => `<div class="sumrow"><span class="sq" style="background:${it.a === "R" ? "var(--red)" : it.a === "G" ? "var(--green)" : it.a ? "var(--sky)" : "var(--line2)"}"></span><span>${esc(it.t)}</span><span class="row" style="flex-wrap:nowrap"><span class="hbar" style="flex:1"><i style="width:${it.pct || 0}%"></i></span><span class="mono">${it.pct == null ? "—" : it.pct + "%"}</span></span></div>`).join("")}</div>
-      <div><div class="eyebrow" style="margin-bottom:.6em">Top players · out of ${c.outOf}</div><div class="podium">${c.top.length ? c.top.map((p, i) => `<div class="pod"><span class="rk">#${i + 1}</span><span style="font-size:1.4em">${esc(p.emoji)}</span><span>${esc(p.name)}</span><b>${p.s}</b></div>`).join("") : `<p class="muted">No points yet.</p>`}</div></div></div>
+      <div><div class="eyebrow" style="margin-bottom:.6em">Top players · correct + speed</div><div class="podium">${c.top.length ? c.top.map((p, i) => `<div class="pod"><span class="rk">#${i + 1}</span><span style="font-size:1.4em">${esc(p.emoji)}</span><span>${esc(p.name)}</span><b>${nfmt(p.a)}</b></div>`).join("") : `<p class="muted">No points yet.</p>`}</div></div></div>
       <div class="takeaway">Takeaway: <span>${esc(c.takeaway)}</span></div>`;
   } else if (t === "rg" && inCountdown(s)) {
     h = countdownHTML(c, s, false);
   } else if (t === "rg") {
     const rev = ph === "reveal"; const tot = rev ? Object.values(c.c).reduce((a, b) => a + b, 0) : 0; const pct = k => tot ? Math.round(c.c[k] / tot * 100) : 0;
-    const choicesHTML = c.type === "mcq"
-      ? `<div class="sopts">${c.opts.map((o, i) => { const k = "ABCD"[i]; return `<div class="sopt o${k} ${rev ? (c.a === k ? "win" : "lose") : ""}"><span class="sh">${SHAPES[k]}</span><span class="tx">${esc(o)}</span>${rev ? `<span class="pc">${pct(k)}%</span>` : ""}</div>`; }).join("")}</div>`
-      : `<div class="flags">${["R", "G"].map(k => `<div class="flag ${k.toLowerCase()} ${rev ? (c.a === k ? "win" : "lose") : ""}"><div style="flex:1"><div class="disp">${k === "R" ? "🚩 Red flag" : "✅ Green flag"}</div>${rev ? `<div class="vbar"><i style="width:${pct(k)}%"></i></div>` : ""}</div>${rev ? `<div class="pct">${pct(k)}%</div>` : ""}</div>`).join("")}</div>`;
+    if (c.empty) return top + `<div class="stage"><div class="cdwrap"><div class="eyebrow">${esc(c.roundName)}</div><div class="lvl-up">No questions yet</div><div class="lvl-sub">Add some from ✏️ Content on the trainer page.</div></div></div>`;
+    const openQ = c.type === "text" || c.type === "number";
+    const openHTML = () => {
+      if (!rev) return "";
+      const list = c.answers || [];
+      if (c.type === "number") return `<div class="numans"><div class="target"><span class="eyebrow">Right answer</span><b>${esc(c.a)}${c.unit ? " " + esc(c.unit) : ""}</b></div>
+        <div class="alist">${list.slice(0, 12).map(x => `<div class="a tcol ${x.ok ? "ok" : ""}" data-t="${x.team}"><span>${esc(x.emoji)} ${esc(x.name)}</span><b>${esc(x.v)}</b>${x.ok ? `<span class="tick">✓</span>` : `<span class="muted">${x.off > 0 ? "off by " + (Math.round(x.off * 100) / 100) : ""}</span>`}</div>`).join("") || `<p class="muted">No answers.</p>`}</div></div>`;
+      return `<div class="txtans">${list.map(x => `<div class="a tcol ${x.aw ? "star" : ""}" data-t="${x.team}"><div class="who">${esc(x.emoji)} ${esc(x.name)}${x.aw ? ` <span class="tick">★ ${x.aw}</span>` : ""}</div><p dir="auto">${esc(x.v)}</p></div>`).join("") || `<p class="muted">No answers.</p>`}</div>`;
+    };
+    const choicesHTML = openQ ? openHTML() : c.type !== "rg"
+      ? `<div class="sopts">${c.opts.map((o, i) => { const k = "ABCD"[i]; return `<div class="sopt o${k} ${rev && c.a ? (c.a === k ? "win" : "lose") : ""}"><span class="sh">${SHAPES[k]}</span><span class="tx">${esc(o)}</span>${rev ? `<span class="pc">${pct(k)}%</span>` : ""}</div>`; }).join("")}</div>`
+      : `<div class="flags">${["R", "G"].map(k => `<div class="flag ${k.toLowerCase()} ${rev && c.a ? (c.a === k ? "win" : "lose") : ""}"><div style="flex:1"><div class="disp">${flagOf(k).emoji} ${esc(flagOf(k).label)}</div>${rev ? `<div class="vbar"><i style="width:${pct(k)}%"></i></div>` : ""}</div>${rev ? `<div class="pct">${pct(k)}%</div>` : ""}</div>`).join("")}</div>`;
     h = `<div class="row"><div class="eyebrow">${esc(c.roundName)} · ${esc(c.level)} · ${c.idx + 1}/${c.total}${c.pts > 1 ? " · " + ptsTxt(c.pts) : ""}</div><div class="spacer"></div>${c.mic && rev ? `<div class="mic">🎤 ${esc(c.mic.emoji)} ${esc(c.mic.name)}</div>` : ""}</div>
-      <p class="big-statement ${c.type === "mcq" ? "q" : ""}">${esc(c.t)}</p>
+      <p class="big-statement ${c.type !== "rg" ? "q" : ""}">${esc(c.t)}</p>
+      ${openQ && !rev ? `<div class="meta">${ring(s, true)}<div><div class="voted mono">${c.voted}/${c.of}</div><div class="eyebrow">answered</div></div></div>` : ""}
       ${choicesHTML}
-      ${rev ? `<div class="explain ${c.d ? "" : "one"}"><div><div class="eyebrow">Why</div><p>${esc(c.e)}</p></div>${c.d ? `<div class="disc"><div class="eyebrow">Discuss</div><p>${esc(c.d)}</p></div>` : ""}</div>`
-        : `<div class="meta">${ring(s, true)}<div><div class="voted mono">${c.voted}/${c.of}</div><div class="eyebrow">voted</div></div><div class="dotsrow">${V.players.map((p, i) => `<span class="${i < c.voted ? "in" : ""}"></span>`).join("")}</div></div>`}`;
+      ${rev && (c.e || c.d) ? `<div class="explain ${c.d ? "" : "one"}"><div><div class="eyebrow">${c.type === "poll" ? "Note" : "Why"}</div><p>${esc(c.e)}</p></div>${c.d ? `<div class="disc"><div class="eyebrow">Discuss</div><p>${esc(c.d)}</p></div>` : ""}</div>`
+        : rev || openQ ? "" : `<div class="meta">${ring(s, true)}<div><div class="voted mono">${c.voted}/${c.of}</div><div class="eyebrow">voted</div></div><div class="dotsrow">${V.players.map((p, i) => `<span class="${i < c.voted ? "in" : ""}"></span>`).join("")}</div></div>`}`;
   } else if (t === "say") {
     const rev = ph === "reveal";
     h = `<div class="row"><div class="eyebrow">Say it like a human · Case ${c.id} · team game</div><div class="spacer"></div>${!rev ? ring(s) : ""}</div>
@@ -368,11 +484,28 @@ function screenHTML() {
   } else if (t === "board") {
     const cols = [["Say it", "say", c.max.say, "var(--t4)"], ["Mystery box", "box", c.max.box, "var(--t2)"], ["Boss fight", "boss", c.max.boss, "var(--t1)"]];
     const MAX = c.max.say + c.max.box + c.max.boss; const top = c.rows[0]; const winners = c.rows.filter(r => r.total === top.total && top.total > 0);
-    h = `<div class="row"><h2 class="disp sh" style="margin:0">Scoreboard</h2><div class="spacer"></div><div class="legend">${cols.map(x => `<span style="--c:${x[3]}">${x[0]} /${x[2]}</span>`).join("")}</div></div>
-      <div class="board">${c.rows.map((r, i) => `<div class="brow tcol ${c.winner && winners.includes(r) ? "win" : ""}" data-t="${r.tid}" style="animation-delay:${i * .12}s"><span class="rk">#${i + 1}</span><span class="nm">${esc(r.name)}</span><span class="trk">${cols.map(x => `<i style="width:${r[x[1]] / MAX * 100}%;background:${x[3]}"></i>`).join("")}</span><span class="tot">${r.total}</span></div>`).join("")}</div>
-      ${c.winner && winners.length ? `<div class="winner"><img class="wmascot" src="/assets/logo.png" alt="" onerror="this.remove()">${winners.map(w => `<div class="w tcol" data-t="${w.tid}">🏆 ${esc(w.name)}</div>`).join("")}<div class="takeaway" style="margin-top:.3em">Turn numbers into <span>action.</span></div></div>` : ""}`;
+    h = `<div class="row"><h2 class="disp ${c.mvp ? "sh2" : "sh"}" style="margin:0">Scoreboard</h2><div class="spacer"></div><div class="legend">${cols.map(x => `<span style="--c:${x[3]}">${x[0]} /${x[2]}</span>`).join("")}</div></div>
+      <div class="board ${c.mvp ? "mini" : ""}">${c.rows.map((r, i) => `<div class="brow tcol ${c.winner && winners.includes(r) ? "win" : ""}" data-t="${r.tid}" style="animation-delay:${i * .12}s"><span class="rk">#${i + 1}</span><span class="nm">${esc(r.name)}</span><span class="trk">${cols.map(x => `<i style="width:${r[x[1]] / MAX * 100}%;background:${x[3]}"></i>`).join("")}</span><span class="tot">${r.total}</span></div>`).join("")}</div>
+      ${c.winner && winners.length ? `<div class="winner ${c.mvp ? "compact" : ""}"><img class="wmascot" src="${logoSrc()}" alt="" onerror="this.remove()">${winners.map(w => `<div class="w tcol" data-t="${w.tid}">🏆 ${esc(w.name)}</div>`).join("")}<div class="takeaway" style="margin-top:.3em">Turn numbers into <span>action.</span></div></div>` : ""}
+      ${c.mvp ? mvpHTML(c) : ""}`;
   }
   return top + `<div class="stage">${h}</div>`;
+}
+
+function mvpHTML(c) {
+  const p = c.players || [];
+  if (!p.length || !p[0].arena) return `<div class="mvp"><div class="eyebrow">Top players</div><p class="muted">No individual points yet.</p></div>`;
+  const three = p.slice(0, 3), rest = p.slice(3, 8);
+  const order = [three[1], three[0], three[2]].filter(Boolean);
+  const med = { 1: "🥇", 2: "🥈", 3: "🥉" };
+  return `<div class="mvp">
+    <div class="row" style="justify-content:center"><h2 class="disp sh2" style="margin:0">👑 Best players</h2></div>
+    <p class="muted" style="text-align:center;margin:.2em 0 .8em">Correct answers <b>+</b> how fast you answered</p>
+    <div class="pod3">${order.map(x => `<div class="p${x.rank} tcol" data-t="${x.team}">
+      <span class="med">${med[x.rank]}</span><span class="av">${esc(x.emoji)}</span><span class="nm">${esc(x.name)}</span>
+      <b class="pts">${nfmt(x.arena)}</b><span class="sub">${x.c}/${c.qCount || x.ans} correct · ⚡ ${nfmt(x.speed)}</span><i class="col"></i></div>`).join("")}</div>
+    ${rest.length ? `<div class="mvprest">${rest.map(x => `<span class="tcol" data-t="${x.team}">#${x.rank} ${esc(x.emoji)} ${esc(x.name)} <b>${nfmt(x.arena)}</b></span>`).join("")}</div>` : ""}
+  </div>`;
 }
 function renderScreen(root) {
   const sig = JSON.stringify([V.stage, V.cur && { ...V.cur, notVoted: 0, keys: V.stage.type === "boss" ? V.stage.q : 0 }, V.players, V.teams, inCountdown(V.stage), V.timer]);
@@ -382,10 +515,10 @@ function renderScreen(root) {
   if (V.stage.type === "lobby") drawQR();
   if (V.players.length > prevPlayers && prevPlayers) sfx("join");
   prevPlayers = V.players.length;
-  const pk = V.stage.type + ":" + V.stage.phase + ":" + (V.cur && V.cur.qid) + ":" + V.stage.winner + ":" + V.stage.q;
+  const pk = V.stage.type + ":" + V.stage.phase + ":" + (V.cur && V.cur.qid) + ":" + V.stage.winner + ":" + V.stage.mvp + ":" + V.stage.q;
   if (pk !== prevPhaseKey) {
     if (V.stage.phase === "reveal") sfx("reveal");
-    if (V.stage.type === "board" && V.stage.winner) { sfx("win"); confetti(260); }
+    if (V.stage.type === "board" && (V.stage.winner || V.stage.mvp)) { fanfare(); confetti(260); fireworks(9000); }
     prevPhaseKey = pk;
   }
   tickTimers();
@@ -399,17 +532,22 @@ function drawQR() {
 /* =====================================================================
    HOST
    ===================================================================== */
-const SECTIONS = [["lobby", "Lobby"], ["rg:1", "R/G 1"], ["say", "Say it"], ["rg:RATES", "A vs B"], ["rg:2", "R/G 2"], ["rg:PULSE", "PULSE"], ["box", "Mystery box"], ["rg:3", "KPI round"], ["rg:QB", "QUICKBITE"], ["rg:4", "R/G 4"], ["rg:VOLT", "VOLT"], ["boss", "Boss fight"], ["rg:F", "Final flag"], ["board", "Scoreboard"], ["rg:BANK", "Bonus quiz"]];
-const NAV_GROUPS = [
-  ["", [["lobby", "Lobby"]]],
-  ["👤 Individual", [["rg:1", "R/G 1"], ["rg:RATES", "A vs B"], ["rg:2", "R/G 2"], ["rg:PULSE", "PULSE"], ["rg:3", "KPI round"], ["rg:QB", "QUICKBITE"], ["rg:4", "R/G 4"], ["rg:VOLT", "VOLT"], ["rg:F", "Final flag"], ["rg:BANK", "Bonus quiz"]]],
-  ["👥 Group", [["say", "Say it"], ["box", "Mystery box"], ["boss", "Boss fight"]]],
-  ["", [["board", "Scoreboard"]]]
-];
+const GROUP_GAMES = [["say", "Say it"], ["box", "Mystery box"], ["boss", "Boss fight"]];
+function navGroups() {
+  const st = SETUP(), g = st.games || {};
+  const ind = (st.rounds || []).map(r => ["rg:" + r.key, r.name]);
+  const grp = GROUP_GAMES.filter(([k]) => g[k] !== false);
+  const out = [["", [["lobby", "Lobby"]]]];
+  if (ind.length) out.push(["👤 Individual", ind]);
+  if (grp.length) out.push(["👥 Group", grp]);
+  out.push(["", [["board", "Scoreboard"]]]);
+  return out;
+}
+function sections() { return navGroups().flatMap(g => g[1]); }
 let dockMin = ls.get("mc-dockmin", false);
 function renderPin(bad) {
-  $("#app").innerHTML = `<div class="pinwrap"><div class="pcard" style="max-width:420px;width:100%"><div class="logo" style="margin-bottom:12px"><img src="/assets/logo.png" alt="" onerror="this.remove()"><i></i><span>Trainer</span></div>
-    <h2 class="disp bigtitle">Host PIN</h2><p class="muted">The PIN you set in Vercel (HOST_PIN). Default is 1234.</p>
+  $("#app").innerHTML = `<div class="pinwrap"><div class="pcard" style="max-width:420px;width:100%">${brandHTML("Trainer")}
+    <h2 class="disp bigtitle">Host PIN</h2><p class="muted">The PIN you set in Vercel (HOST_PIN). Default is 1234. This device remembers it, so you type it once.</p>
     <input class="input" id="f-pin" type="password" inputmode="numeric" autocomplete="off" style="margin-top:10px">
     <p class="err" id="pinerr" style="margin-top:10px" ${bad ? "" : "hidden"}>Wrong PIN — try again.</p><button class="btn red cta" style="margin-top:14px" data-act="pin">Enter</button></div></div>`;
   setTimeout(() => $("#f-pin") && $("#f-pin").focus(), 50);
@@ -429,10 +567,10 @@ function seg(field, max, val) { let h = `<span class="seg">`; for (let i = 0; i 
 function curSection() { const s = V.stage; return s.type === "rg" ? "rg:" + s.round : s.type; }
 function dockHTML() {
   const s = V.stage, c = V.cur, H = V.host, sc = H.score;
-  const navBtns = NAV_GROUPS.map(([g, items]) => `<div class="navg ${g ? "lab" : ""}">${g ? `<span class="gl">${g}</span>` : ""}${items.map(([k, l]) => `<button class="${curSection() === k ? "on" : ""}" data-act="go" data-k="${k}">${l}</button>`).join("")}</div>`).join("");
+  const navBtns = navGroups().map(([g, items]) => `<div class="navg ${g ? "lab" : ""}">${g ? `<span class="gl">${g}</span>` : ""}${items.map(([k, l]) => `<button class="${curSection() === k ? "on" : ""}" data-act="go" data-k="${k}">${l}</button>`).join("")}</div>`).join("");
   const nav = `<div class="dock-top"><span class="lbl">Trainer</span><div class="nav">${navBtns}</div><div class="spacer"></div>
     <button class="btn sm" data-act="timerAdd">+30s</button><button class="btn sm" data-act="timerStop">Stop timer</button><button class="btn sm" data-act="scores">🔒 Private scores</button><button class="btn sm" data-act="edOpen">✏️ Content</button><button class="btn sm ${V.timer ? "amber" : ""}" data-act="timerOpen">⏱ Big timer</button>
-    <button class="btn sm ${soundOn ? "amber" : ""}" data-act="sound">${soundOn ? "🔊" : "🔇"}</button><button class="btn sm" data-act="min" title="P">${dockMin ? "▲ Show" : "▼ Hide"} <span class="kbd">P</span></button></div>`;
+    <button class="btn sm" data-act="hostLink" title="Copy a link that opens this page with no password">🔗 My link</button><button class="btn sm ${soundOn ? "amber" : ""}" data-act="sound">${soundOn ? "🔊" : "🔇"}</button><button class="btn sm" data-act="min" title="P">${dockMin ? "▲ Show" : "▼ Hide"} <span class="kbd">P</span></button></div>`;
   let b = "";
   if (s.type === "lobby") {
     b = `<div class="ctx"><span class="info">Players join at <b>${esc(location.origin)}</b> · ${V.players.length} joined</span></div>
@@ -446,11 +584,12 @@ function dockHTML() {
     if (s.phase === "summary") b = `<div class="ctx"><span class="info">Round summary on screen.</span><button class="btn sm" data-act="rgGo" data-i="${n - 1}">← Back to last statement</button><div class="spacer"></div><button class="btn primary" data-act="nextSection">Next section ▶</button></div>`;
     else {
       const nv = (c.notVoted || []).map(id => V.players.find(p => p.id === id)).filter(Boolean);
-      b = `<div class="ctx"><b>${esc(c.roundName)} · ${idx + 1}/${n}</b><span class="info">Answer: <span class="spoiler">${ansLabel(c)}</span> · votes ${c.voted}/${c.of} (${Object.entries(c.c).map(([k, v]) => (c.type === "mcq" ? k : k === "R" ? "🚩" : "✅") + v).join(" ")})</span><div class="spacer"></div>
+      b = `<div class="ctx"><b>${esc(c.roundName)} · ${idx + 1}/${n}</b><span class="info">Answer: <span class="spoiler">${ansLabel(c)}</span> · ${c.type === "text" || c.type === "number" ? "answers " + c.voted + "/" + c.of : "votes " + c.voted + "/" + c.of + " (" + Object.entries(c.c || {}).map(([k, v]) => (c.type === "rg" ? (k === "R" ? flagOf("R").emoji : flagOf("G").emoji) : k) + v).join(" ") + ")"}</span><div class="spacer"></div>
         <button class="btn sm" data-act="rgGo" data-i="${idx - 1}" ${idx === 0 ? "disabled" : ""}>← Prev</button>
         ${s.phase === "vote" ? `<button class="btn sm" data-act="rgRestart">Restart timer</button><button class="btn red" data-act="rgReveal">Reveal <span class="kbd">R</span></button>`
           : `${idx < n - 1 ? `<button class="btn primary" data-act="rgGo" data-i="${idx + 1}">Next statement ▶ <span class="kbd">→</span></button>` : `<button class="btn primary" data-act="rgSummary">Round summary ▶</button>`}`}</div>
         ${s.phase === "vote" && nv.length ? `<div class="ctx info">Not voted yet: ${nv.map(p => esc(p.name)).join(", ")}</div>` : ""}
+        ${s.phase === "reveal" && c.type === "text" ? `<div class="ctx awards"><b>Give points</b>${(c.answers || []).map(x => `<span class="award"><span class="nm">${esc(x.emoji)} ${esc(x.name)}</span>${[0, 1, 2, 3].map(n => `<button class="${(x.aw || 0) === n ? "on" : ""}" data-act="award" data-q="${c.qid}" data-p="${x.id}" data-v="${n}">${n}</button>`).join("")}</span>`).join("") || `<span class="info">No answers yet.</span>`}</div>` : ""}
         ${s.phase === "reveal" ? `<div class="ctx"><button class="btn sm amber" data-act="mic">🎤 Pick someone to explain</button>${s.mic ? `<span class="info">${esc((V.players.find(p => p.id === s.mic) || {}).name)}</span><button class="btn sm" data-act="reason" data-p="${s.mic}">+1 Reasoning</button><button class="btn sm" data-act="part" data-p="${s.mic}">+1 Participation</button><button class="btn sm ghost" data-act="micClear">Clear</button>` : ""}${c.d ? `<span class="info">Discuss: ${esc(c.d)}</span>` : ""}</div>` : ""}`;
     }
   } else if (s.type === "say") {
@@ -482,7 +621,9 @@ function dockHTML() {
       <div style="overflow-x:auto"><table class="htable"><thead><tr><th>Team</th>${pts.map((p, i) => `<th>Q${i + 1} /${p}</th>`).join("")}<th>/30</th></tr></thead><tbody>
       ${V.teams.map(t => `<tr><td><b>${esc(t.name)}</b></td>${pts.map((p, i) => `<td>${seg(`boss:${t.id}:q${i}`, p, sc[`boss:${t.id}:q${i}`])}</td>`).join("")}<td class="mono">${H.teamTotals[t.id].boss}</td></tr>`).join("")}</tbody></table></div>`;
   } else if (s.type === "board") {
-    b = `<div class="ctx"><button class="btn ${s.winner ? "" : "red"}" data-act="winner">${s.winner ? "Hide winner" : "🏆 Reveal winner"}</button><span class="info">Individual scores stay in 🔒 Private scores.</span></div>`;
+    b = `<div class="ctx"><button class="btn ${s.winner ? "" : "red"}" data-act="winner">${s.winner ? "Hide team winner" : "🏆 Reveal team winner"}</button>
+      <button class="btn ${s.mvp ? "" : "amber"}" data-act="mvp">${s.mvp ? "Hide best players" : "👑 Reveal best players"}</button>
+      <span class="info">Best players = correct answers + speed. Full 100-point sheet is in 🔒 Private scores.</span></div>`;
   }
   return nav + `<div class="dock-body">${b}</div>`;
 }
@@ -490,16 +631,16 @@ function scoresModal() {
   const H = V.host; const rows = H.individuals.slice().sort((a, b) => b.total - a.total);
   const m = document.createElement("div"); m.className = "modal"; m.id = "scoresModal";
   m.innerHTML = `<div class="in"><div class="row"><h2 class="disp sh2" style="margin:0">Private scores</h2><div class="spacer"></div><button class="btn sm" data-act="csv">Download CSV</button><button class="btn sm primary" data-act="closeModal">Close</button></div>
-   <p class="muted">Total /100 = Red/Green 40% · Boss note 35% · Reasoning 15% · Participation 10%. Don't project this.</p>
-   <div style="overflow-x:auto"><table class="htable"><thead><tr><th>Intern</th><th>Team</th><th>Quiz pts /${H.rgTotal}</th><th>Boss note /10</th><th>Reasoning /5</th><th>Participation /5</th><th>Total</th><th>Their note</th></tr></thead><tbody>
-   ${rows.map(r => `<tr><td>${esc(r.emoji)} <b>${esc(r.name)}</b></td><td>${tname(r.team)}</td><td class="mono">${r.rg}</td><td>${seg("ind:note:" + r.id, 10, r.note)}</td><td>${seg("ind:reason:" + r.id, 5, r.re)}</td><td>${seg("ind:part:" + r.id, 5, r.pa)}</td><td class="mono"><b>${r.total}</b></td><td dir="auto" class="hint" style="max-width:260px">${esc(H.notes[r.id] || "—")}</td></tr>`).join("")}
+   <p class="muted">Arena points = correct answers + speed bonus (that is what the 👑 Best players podium uses). Total /100 = Red/Green 40% · Boss note 35% · Reasoning 15% · Participation 10%. Don't project this.</p>
+   <div style="overflow-x:auto"><table class="htable"><thead><tr><th>Intern</th><th>Team</th><th>✅ Correct</th><th>⚡ Arena pts</th><th>Quiz pts /${H.rgTotal}</th><th>Boss note /10</th><th>Reasoning /5</th><th>Participation /5</th><th>Total</th><th>Their note</th></tr></thead><tbody>
+   ${rows.map(r => `<tr><td>${esc(r.emoji)} <b>${esc(r.name)}</b></td><td>${tname(r.team)}</td><td class="mono">${r.correct}</td><td class="mono">${nfmt(r.arena)}</td><td class="mono">${r.rg}</td><td>${seg("ind:note:" + r.id, 10, r.note)}</td><td>${seg("ind:reason:" + r.id, 5, r.re)}</td><td>${seg("ind:part:" + r.id, 5, r.pa)}</td><td class="mono"><b>${r.total}</b></td><td dir="auto" class="hint" style="max-width:260px">${esc(H.notes[r.id] || "—")}</td></tr>`).join("")}
    </tbody></table></div></div>`;
   const old = $("#scoresModal"); if (old) old.replaceWith(m); else document.body.appendChild(m);
 }
 function csv() {
   const H = V.host; const q = s => '"' + String(s).replace(/"/g, '""') + '"';
-  let out = "Intern,Team,Quiz points /" + H.rgTotal + ",Boss note /10,Reasoning /5,Participation /5,Total /100,Boss note text\n";
-  H.individuals.forEach(r => out += [q(r.name), q(teamOf(r.team).name), r.rg, r.note, r.re, r.pa, r.total, q(H.notes[r.id] || "")].join(",") + "\n");
+  let out = "Intern,Team,Correct answers,Arena points (correct + speed),Quiz points /" + H.rgTotal + ",Boss note /10,Reasoning /5,Participation /5,Total /100,Boss note text\n";
+  H.individuals.forEach(r => out += [q(r.name), q(teamOf(r.team).name), r.correct, r.arena, r.rg, r.note, r.re, r.pa, r.total, q(H.notes[r.id] || "")].join(",") + "\n");
   out += "\nTeam,Say It /15,Mystery Box /10,Boss Fight /30,Total /55\n";
   V.teams.forEach(t => { const x = H.teamTotals[t.id]; out += [q(t.name), x.say, x.box, x.boss, x.total].join(",") + "\n"; });
   const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob(["﻿" + out], { type: "text/csv" })); a.download = "analytics-arena-scores.csv"; document.body.appendChild(a); a.click(); a.remove();
@@ -517,14 +658,14 @@ function timerModal() {
     <div class="spacer"></div><button class="btn sm ghost" data-act="timerStopBig">Stop timer</button></div>`;
 }
 /* ---------------- question & content editor ---------------- */
-let ED = null, EDC = null, edRound = "1", edTab = "ind", edGroup = "say", edOrig = "";
+let ED = null, EDC = null, EDS = null, edRound = "1", edTab = "ind", edGroup = "say", edOrig = "";
 const clone = x => JSON.parse(JSON.stringify(x));
 function edOpen() {
-  ED = clone(V.host.quiz); EDC = clone(V.host.content); edOrig = JSON.stringify([ED, EDC]);
+  ED = clone(V.host.quiz); EDC = clone(V.host.content); EDS = clone(V.setup); edOrig = JSON.stringify([ED, EDC, EDS]);
   const t = V.stage.type;
   edTab = ["say", "box", "boss"].includes(t) ? "group" : "ind";
   if (t === "say") edGroup = "say"; else if (t === "box") edGroup = "box"; else if (t === "boss") edGroup = "boss";
-  edRound = t === "rg" && V.host.rounds[V.stage.round] ? V.stage.round : "1";
+  edRound = t === "rg" && V.host.rounds[V.stage.round] ? V.stage.round : (V.order || [])[0] || "1";
   renderEditor();
 }
 function setPath(o, path, val) { const k = path.split("."); let c = o; for (let i = 0; i < k.length - 1; i++) c = c[k[i]]; c[k.at(-1)] = val; }
@@ -594,12 +735,85 @@ function groupHTML() {
       ${fld("Answer key — shown when you reveal", `boss.qs.${i}.1`, q[1], { area: 1 })}</div>`).join("")}
     <div class="row" style="margin-top:12px"><button class="btn sm" data-act="edGAdd" data-g="boss.qs">+ Add question</button></div>`;
 }
+
+const EMOJI_PRESETS = {
+  Animals: ["🦊","🐙","🦄","🐯","🐸","🐼","🦁","🐧","🐝","🦉","🐬","🐱","🐶","🐨","🐵","🦋","🐢","🦈","🐲","🦓"],
+  Food: ["🍕","🍔","🧁","🍉","🍩","☕","🥐","🍿","🍣","🍫","🍦","🥑","🍇","🌮","🍜","🍪","🥞","🍓","🧃","🍺"],
+  Fun: ["🚀","👾","🤖","👻","🎃","⚡","🔥","🌈","⭐","🎮","🎧","📸","💎","🎯","🎲","🏆","🎨","🧩","🪄","🛸"],
+  Work: ["📊","📈","💡","📝","📌","🗂","🖥","📱","🧠","🔍","📣","🧾","⏱","🧰","🔧","📦","🗓","✉️","🏷","🔑"]
+};
+function splitEmojis(txt) { const seg = typeof Intl !== "undefined" && Intl.Segmenter ? [...new Intl.Segmenter().segment(txt)].map(x => x.segment) : [...txt]; return seg.map(x => x.trim()).filter(x => x && !/^[\s,]+$/.test(x)).slice(0, 80); }
+const flds = (l, path, v, o) => `<div class="sfield">` + fld(l, path, v, o).replace(/data-cf=/g, "data-cs=") + `</div>`;
+function setupHTML() {
+  const S = EDS, sc = S.scoring || {}, tm = S.timers || {}, g = S.games || {};
+  const line = (label, path, val, ph, num) => `<div class="sfield">${flds(label, path, val, { ph, num })}</div>`;
+  const rounds = (S.rounds || []).map((r, i) => `<div class="qed">
+    <div class="row"><b class="mono">${i + 1}</b>
+      <input class="hinput" style="flex:1;min-width:150px" data-cs="rounds.${i}.name" value="${esc(r.name)}" placeholder="Round name">
+      <span class="seg">${[["round", "Questions"], ["app", "Example"], ["bonus", "Bonus"]].map(([k, l]) => `<button class="${r.kind === k ? "on" : ""}" data-act="edSTog" data-p="rounds.${i}.kind" data-v="${k}">${l}</button>`).join("")}</span>
+      <span class="muted small">${ED.filter(q => q.r === r.key).length} questions</span>
+      <span class="spacer"></span>
+      <button class="btn sm ghost" data-act="edRMove" data-i="${i}" data-v="-1" ${i === 0 ? "disabled" : ""}>↑</button>
+      <button class="btn sm ghost" data-act="edRMove" data-i="${i}" data-v="1" ${i === S.rounds.length - 1 ? "disabled" : ""}>↓</button>
+      <button class="btn sm ghost" data-act="edRDel" data-i="${i}">🗑</button></div>
+    <div class="s2">${flds("Subtitle on the big screen", "rounds." + i + ".level", r.level)}${flds("Rule / theme", "rounds." + i + ".rule", r.rule)}</div>
+    ${flds("Takeaway — shown in the round summary", "rounds." + i + ".takeaway", r.takeaway)}</div>`).join("");
+  return `
+  <div class="setupgrid">
+    <div class="qed"><div class="eyebrow big">🎨 Name & look</div>
+      <div class="s2">${flds("Game name", "name", S.name, { ph: "Analytics Arena" })}${flds("Line under the name on the join screen", "tagline", S.tagline, { ph: "Name, team, go." })}</div>
+      <div class="row" style="margin-top:8px;align-items:flex-start">
+        <div class="sfield" style="flex:0 0 auto"><label class="eyebrow">Main colour</label><input type="color" class="hcolor" data-cs="accent" value="${esc(S.accent || "#1A9FEF")}"></div>
+        <div class="sfield" style="flex:1"><label class="eyebrow">Logo</label><div class="row" style="gap:6px">
+          <img class="logoprev" src="${S.logo || "/assets/logo.png"}" alt="" onerror="this.remove()">
+          <button class="btn sm" data-act="edLogo">Upload…</button>${S.logo ? `<button class="btn sm ghost" data-act="edLogoClear">Use the file one</button>` : ""}
+          <input type="file" id="edLogoFile" accept="image/*" hidden></div></div>
+      </div>
+      <p class="muted small" style="margin-top:6px">A square PNG works best. It is stored in the game, so you don't need GitHub for it.</p>
+    </div>
+
+    <div class="qed"><div class="eyebrow big">🎭 Avatars</div>
+      <div class="row">${Object.keys(EMOJI_PRESETS).map(k => `<button class="btn sm ghost" data-act="edEmojiPreset" data-k="${k}">${k}</button>`).join("")}</div>
+      <label class="eyebrow" style="margin-top:8px">Avatar list — just type or paste emojis</label>
+      <textarea class="hinput" rows="3" data-cs="emojisText">${esc((S.emojis || []).join(" "))}</textarea>
+      <p class="muted small">${(S.emojis || []).length} avatars. Players pick one of these when they join.</p>
+    </div>
+
+    <div class="qed"><div class="eyebrow big">🚩 The two-button question</div>
+      <div class="s2">${flds("Button 1 emoji", "flag.R.emoji", (S.flag.R || {}).emoji)}${flds("Button 1 label", "flag.R.label", (S.flag.R || {}).label, { ph: "Red flag" })}</div>
+      <div class="s2">${flds("Button 2 emoji", "flag.G.emoji", (S.flag.G || {}).emoji)}${flds("Button 2 label", "flag.G.label", (S.flag.G || {}).label, { ph: "Green flag" })}</div>
+      <p class="muted small">Use it as Red/Green, True/False, Agree/Disagree, Do/Don't — anything with two sides.</p>
+    </div>
+
+    <div class="qed"><div class="eyebrow big">🏆 Scoring & timers</div>
+      <div class="s3">${flds("Points per 1-point answer", "scoring.base", sc.base, { num: 1 })}${flds("Speed bonus %  (0 = off)", "scoring.speed", sc.speed, { num: 1 })}${flds("Points for answering a poll", "scoring.poll", sc.poll, { num: 1 })}</div>
+      <div class="s3">${flds("Seconds · two-button", "timers.rg", tm.rg, { num: 1 })}${flds("Seconds · choices", "timers.mcq", tm.mcq, { num: 1 })}${flds("Seconds · long choices", "timers.mcqLong", tm.mcqLong, { num: 1 })}${flds("Seconds · written answer", "timers.text", tm.text, { num: 1 })}</div>
+      <p class="muted small">Speed bonus 50% means the fastest correct answer is worth 1.5×. Set 0 and only correct answers count.</p>
+    </div>
+
+    <div class="qed"><div class="eyebrow big">👥 Team games in this session</div>
+      <div class="row">${[["say", "💬 Say it like a human"], ["box", "🎁 Mystery box"], ["boss", "👾 Boss fight"]].map(([k, l]) => `<button class="btn sm ${g[k] !== false ? "amber" : "ghost"}" data-act="edSTog" data-p="games.${k}" data-v="${g[k] !== false ? "0" : "1"}">${g[k] !== false ? "✓ " : ""}${l}</button>`).join("")}</div>
+      <p class="muted small">Switched-off games disappear from the trainer bar and from the phones.</p>
+    </div>
+
+    <div class="qed"><div class="eyebrow big">💾 Session file</div>
+      <div class="row"><button class="btn sm" data-act="edExport">⬇️ Download this session</button><button class="btn sm" data-act="edImport">⬆️ Load a session file</button><input type="file" id="edFile" accept=".json,application/json" hidden></div>
+      <p class="muted small">One file holds the name, logo, rounds, questions and team games. Keep a file per session and load it before you start — nothing else to change.</p>
+    </div>
+  </div>
+
+  <div class="eyebrow big" style="margin-top:14px">📋 Rounds — the order of the session</div>
+  <p class="muted small">Each round is a button in the trainer bar and a section in the game. The questions live in the 👤 Individual tab.</p>
+  ${rounds}
+  <div class="row" style="margin-top:10px"><button class="btn sm" data-act="edRAdd">+ Add a round</button></div>`;
+}
 function renderEditor() {
   const R = V.host.rounds;
+  if (!R[edRound]) edRound = Object.keys(R)[0];
   const items = ED.map((q, i) => ({ q, i })).filter(x => x.q.r === edRound);
   const card = ({ q, i }, n) => `<div class="qed">
     <div class="row"><b class="mono">#${n + 1}</b>
-      <span class="seg"><button class="${q.type !== "mcq" ? "on" : ""}" data-act="edType" data-i="${i}" data-v="rg">🚩✅ Red/Green</button><button class="${q.type === "mcq" ? "on" : ""}" data-act="edType" data-i="${i}" data-v="mcq">ABCD Choices</button></span>
+      <span class="seg"><button class="${q.type === "rg" || !q.type ? "on" : ""}" data-act="edType" data-i="${i}" data-v="rg">${flagOf("R").emoji}${flagOf("G").emoji} Two buttons</button><button class="${q.type === "mcq" ? "on" : ""}" data-act="edType" data-i="${i}" data-v="mcq">ABCD Choices</button><button class="${q.type === "poll" ? "on" : ""}" data-act="edType" data-i="${i}" data-v="poll">📊 Poll</button><button class="${q.type === "text" ? "on" : ""}" data-act="edType" data-i="${i}" data-v="text">✍️ Written</button><button class="${q.type === "number" ? "on" : ""}" data-act="edType" data-i="${i}" data-v="number">🔢 Number</button></span>
       <span class="muted small">Points</span><span class="seg">${[1, 2, 3, 4, 5].map(p => `<button class="${(q.pts || 1) === p ? "on" : ""}" data-act="edPts" data-i="${i}" data-v="${p}">${p}</button>`).join("")}</span>
       <span class="spacer"></span>
       <button class="btn sm ghost" data-act="edMove" data-i="${i}" data-v="-1" ${n === 0 ? "disabled" : ""} title="Move up">↑</button>
@@ -607,10 +821,12 @@ function renderEditor() {
       <button class="btn sm ghost" data-act="edDel" data-i="${i}" title="Delete">🗑</button></div>
     <label class="eyebrow">Statement / question</label>
     <textarea class="hinput" rows="2" data-ef="t" data-i="${i}" dir="auto">${esc(q.t)}</textarea>
-    ${q.type === "mcq"
-      ? `<label class="eyebrow">Options — tap the circle to mark the correct one</label>${[0, 1, 2, 3].map(k => { const L = "ABCD"[k]; return `<div class="row" style="flex-wrap:nowrap"><button class="radio ${q.a === L ? "on" : ""}" data-act="edAns" data-i="${i}" data-v="${L}" title="Correct answer">${q.a === L ? "✓" : L}</button><input class="hinput" style="flex:1" data-ef="opt" data-o="${k}" data-i="${i}" value="${esc((q.opts || [])[k] || "")}" placeholder="Option ${L}${k > 1 ? " (optional)" : ""}" dir="auto"></div>`; }).join("")}`
-      : `<label class="eyebrow">Correct answer</label><div class="row"><button class="btn sm ${q.a === "R" ? "red-on" : "ghost"}" data-act="edAns" data-i="${i}" data-v="R">🚩 Red flag</button><button class="btn sm ${q.a === "G" ? "green-on" : "ghost"}" data-act="edAns" data-i="${i}" data-v="G">✅ Green flag</button></div>`}
-    <label class="eyebrow">Why — shown after reveal</label>
+    ${q.type === "mcq" || q.type === "poll"
+      ? `<label class="eyebrow">${q.type === "poll" ? "Options — a poll has no right answer" : "Options — tap the circle to mark the correct one"}</label>${[0, 1, 2, 3].map(k => { const L = "ABCD"[k]; return `<div class="row" style="flex-wrap:nowrap">${q.type === "poll" ? `<span class="radio dead">${L}</span>` : `<button class="radio ${q.a === L ? "on" : ""}" data-act="edAns" data-i="${i}" data-v="${L}" title="Correct answer">${q.a === L ? "✓" : L}</button>`}<input class="hinput" style="flex:1" data-ef="opt" data-o="${k}" data-i="${i}" value="${esc((q.opts || [])[k] || "")}" placeholder="Option ${L}${k > 1 ? " (optional)" : ""}" dir="auto"></div>`; }).join("")}`
+      : q.type === "text" ? `<p class="muted small" style="margin:6px 0">Everyone writes their own answer. After Reveal you give each one 0–3 points from the trainer bar.</p>`
+      : q.type === "number" ? `<div class="s3">${fld("Right number", "a", q.a, { num: 1 }).replace(/data-cf=/g, 'data-ef=').replace('data-ef="a"', 'data-ef="a" data-i="' + i + '"')}${fld("Accepted ± ", "tol", q.tol || 0, { num: 1 }).replace(/data-cf=/g, 'data-ef=').replace('data-ef="tol"', 'data-ef="tol" data-i="' + i + '"')}${fld("Unit (optional)", "unit", q.unit || "", { ph: "%" }).replace(/data-cf=/g, 'data-ef=').replace('data-ef="unit"', 'data-ef="unit" data-i="' + i + '"')}</div>`
+      : `<label class="eyebrow">Correct answer</label><div class="row"><button class="btn sm ${q.a === "R" ? "red-on" : "ghost"}" data-act="edAns" data-i="${i}" data-v="R">${flagOf("R").emoji} ${esc(flagOf("R").label)}</button><button class="btn sm ${q.a === "G" ? "green-on" : "ghost"}" data-act="edAns" data-i="${i}" data-v="G">${flagOf("G").emoji} ${esc(flagOf("G").label)}</button></div>`}
+    <label class="eyebrow">${q.type === "poll" ? "Comment shown after the results (optional)" : "Why — shown after reveal"}</label>
     <textarea class="hinput" rows="2" data-ef="e" data-i="${i}" dir="auto">${esc(q.e || "")}</textarea>
     <label class="eyebrow">Discussion prompt (optional)</label>
     <input class="hinput" data-ef="d" data-i="${i}" value="${esc(q.d || "")}" dir="auto">
@@ -618,20 +834,28 @@ function renderEditor() {
   let m = $("#qEditor"); const scroll = m ? m.scrollTop : 0;
   if (!m) { m = document.createElement("div"); m.className = "modal"; m.id = "qEditor"; document.body.appendChild(m); }
   const indBody = `<div class="nav">${Object.entries(R).map(([k, r]) => `<button class="${edRound === k ? "on" : ""}" data-act="edRound" data-r="${k}">${esc(r.name)} <span class="mono" style="opacity:.6">${ED.filter(q => q.r === k).length}</span></button>`).join("")}</div>
-    <div class="muted small" style="margin-top:8px">${esc(R[edRound].rule)} · ${esc(R[edRound].level)}</div>
+    <div class="muted small" style="margin-top:8px">${esc((R[edRound] || {}).rule || "")} · ${esc((R[edRound] || {}).level || "")}</div>
     ${items.map(card).join("") || `<p class="muted">No questions in this round yet.</p>`}
-    <div class="row" style="margin-top:12px"><button class="btn sm" data-act="edAdd" data-v="rg">+ Add Red/Green statement</button><button class="btn sm" data-act="edAdd" data-v="mcq">+ Add multiple choice</button></div>`;
-  const edited = edTab === "ind" ? V.host.customQuiz : V.host.customContent;
+    <div class="row" style="margin-top:12px"><button class="btn sm" data-act="edAdd" data-v="rg">+ Add Red/Green statement</button><button class="btn sm" data-act="edAdd" data-v="mcq">+ Add multiple choice</button><button class="btn sm" data-act="edAdd" data-v="poll">+ Add poll</button><button class="btn sm" data-act="edAdd" data-v="text">+ Add written answer</button><button class="btn sm" data-act="edAdd" data-v="number">+ Add number guess</button></div>`;
+  const edited = edTab === "ind" ? V.host.customQuiz : edTab === "group" ? V.host.customContent : V.host.customSetup;
   m.innerHTML = `<div class="in"><div class="row"><h2 class="disp sh2" style="margin:0;font-size:32px">✏️ Edit content</h2><span class="chip" style="font-size:12px">${edited ? "edited version live" : "original from the session file"}</span><div class="spacer"></div>
       <button class="btn sm ghost" data-act="edReset">Reset this tab</button><button class="btn sm" data-act="edClose">Close</button><button class="btn sm red" data-act="edSave">💾 Save changes</button></div>
     <p class="muted small" style="margin:8px 0 12px">Changes go live for everyone as soon as you save — no GitHub needed. Answers already given are kept.</p>
-    <div class="nav big">${[["ind", "👤 Individual questions"], ["group", "👥 Group games"]].map(([k, l]) => `<button class="${edTab === k ? "on" : ""}" data-act="edTab" data-t="${k}">${l}</button>`).join("")}</div>
-    <div style="margin-top:12px">${edTab === "ind" ? indBody : groupHTML()}</div>
+    <div class="nav big">${[["ind", "👤 Individual questions"], ["group", "👥 Group games"], ["setup", "⚙️ Session setup"]].map(([k, l]) => `<button class="${edTab === k ? "on" : ""}" data-act="edTab" data-t="${k}">${l}</button>`).join("")}</div>
+    <div style="margin-top:12px">${edTab === "ind" ? indBody : edTab === "group" ? groupHTML() : setupHTML()}</div>
     <div class="row" style="margin-top:14px"><div class="spacer"></div><button class="btn red" data-act="edSave">💾 Save changes</button></div></div>`;
   m.scrollTop = scroll;
 }
 document.addEventListener("input", e => {
   const el = e.target;
+  if (EDS && el.dataset.cs) {
+    const path = el.dataset.cs;
+    if (path === "emojisText") EDS.emojis = [...el.value.replace(/[\s,]+/gu, " ").trim()].length ? splitEmojis(el.value) : [];
+    else if (path.startsWith("scoring.") || path.startsWith("timers.")) setPath(EDS, path, Number(el.value) || 0);
+    else setPath(EDS, path, el.value);
+    if (path === "accent" || path === "name") { brandSig = ""; const keep = V.setup; V.setup = EDS; applyBrand(); V.setup = keep; }
+    return;
+  }
   if (EDC && el.dataset.cf) {
     const path = el.dataset.cf;
     if (path.endsWith(".metricsText")) { const i = +path.split(".")[1]; EDC.boxes[i].metrics = el.value.split(",").map(x => x.trim()).filter(Boolean); }
@@ -642,7 +866,50 @@ document.addEventListener("input", e => {
   }
   if (!ED || !el.dataset.ef) return; const q = ED[+el.dataset.i]; if (!q) return;
   if (el.dataset.ef === "opt") { q.opts = q.opts || ["", "", "", ""]; while (q.opts.length < 4) q.opts.push(""); q.opts[+el.dataset.o] = el.value; }
+  else if (el.dataset.ef === "tol") q.tol = Number(el.value) || 0;
   else q[el.dataset.ef] = el.value;
+});
+
+/* ---- session setup: logo upload + import/export file ---- */
+document.addEventListener("change", e => {
+  const el = e.target;
+  if (el.id === "edLogoFile" && el.files && el.files[0]) {
+    const f = el.files[0];
+    if (f.size > 8e6) return toast("That image is too big — under 8 MB please");
+    const img = new Image(), url = URL.createObjectURL(f);
+    img.onload = () => {
+      const max = 400, sc = Math.min(1, max / Math.max(img.width, img.height));
+      const cv = document.createElement("canvas"); cv.width = Math.round(img.width * sc); cv.height = Math.round(img.height * sc);
+      cv.getContext("2d").drawImage(img, 0, 0, cv.width, cv.height);
+      let data = cv.toDataURL("image/png");
+      if (data.length > 380000) data = cv.toDataURL("image/jpeg", .85);
+      URL.revokeObjectURL(url);
+      if (data.length > 380000) return toast("That image is too heavy — try a simpler one");
+      EDS.logo = data; renderEditor(); toast("Logo ready — press 💾 Save changes");
+    };
+    img.onerror = () => toast("Couldn't read that image");
+    img.src = url; el.value = "";
+  }
+  if (el.id === "edFile" && el.files && el.files[0]) {
+    const r = new FileReader();
+    r.onload = () => {
+      let p; try { p = JSON.parse(r.result); } catch (x) { return toast("That file isn't a session file"); }
+      if (!p || !p.setup || !Array.isArray(p.quiz)) return toast("That file isn't a session file");
+      if (!confirm("Load “" + (p.setup.name || "session") + "”? It replaces the name, logo, rounds, questions and team games — and goes live right away.")) return;
+      EDS = p.setup; ED = p.quiz; if (p.content) EDC = p.content;
+      (async () => {
+        const a1 = await host("setupSave", { setup: EDS });
+        const a2 = a1 && await host("quizSave", { quiz: ED });
+        const a3 = a2 && p.content ? await host("contentSave", { content: EDC }) : a2;
+        if (!a3) return;
+        await refresh();
+        ED = clone(V.host.quiz); EDC = clone(V.host.content); EDS = clone(V.setup);
+        edOrig = JSON.stringify([ED, EDC, EDS]); edRound = (EDS.rounds[0] || {}).key || edRound; edTab = "setup";
+        brandSig = ""; applyBrand(); renderEditor(); toast("Session loaded and live ✓");
+      })();
+    };
+    r.readAsText(el.files[0]); el.value = "";
+  }
 });
 function edAct(a, d) {
   const i = +d.i, q = ED && ED[i];
@@ -663,15 +930,33 @@ function edAct(a, d) {
     else if (d.g === "boxes") EDC.boxes.push({ id: String.fromCharCode(65 + EDC.boxes.length), level: "Medium", format: "Reel", content: "", objective: "", metrics: ["Reach", "Likes", "Saves", "Shares"], trap: "Likes", primary: "", secondary: "", diag: "", why: "", ex: { p: [], s: [], d: [] } });
     else EDC.boss.qs.push(["", "", 3, "text"]);
   }
+  else if (a === "edSTog") { const v = d.v === "0" ? false : d.v === "1" ? true : d.v; setPath(EDS, d.p, v); }
+  else if (a === "edEmojiPreset") EDS.emojis = EMOJI_PRESETS[d.k].slice();
+  else if (a === "edRAdd") { const n = EDS.rounds.length + 1; EDS.rounds.push({ key: "R" + Date.now().toString(36).slice(-4), name: "Round " + n, rule: "", level: "", takeaway: "", kind: "round" }); }
+  else if (a === "edRDel") {
+    if (EDS.rounds.length < 2) return toast("You need at least one round");
+    const r = EDS.rounds[i], n = ED.filter(q => q.r === r.key).length;
+    if (!confirm(n ? `Delete “${r.name}” and its ${n} question(s)?` : `Delete “${r.name}”?`)) return;
+    ED = ED.filter(q => q.r !== r.key); EDS.rounds.splice(i, 1);
+  }
+  else if (a === "edRMove") { const to = i + (+d.v); if (to < 0 || to >= EDS.rounds.length) return; [EDS.rounds[i], EDS.rounds[to]] = [EDS.rounds[to], EDS.rounds[i]]; }
   else if (a === "edRound") edRound = d.r;
-  else if (a === "edType") { q.type = d.v; if (d.v === "mcq") { q.opts = q.opts && q.opts.length ? q.opts : ["", "", "", ""]; if (!"ABCD".includes(q.a)) q.a = "A"; } else { q.a = q.a === "G" ? "G" : "R"; } }
+  else if (a === "edType") { q.type = d.v;
+    if (d.v === "mcq" || d.v === "poll") { q.opts = q.opts && q.opts.length ? q.opts : ["", "", "", ""]; q.a = d.v === "poll" ? null : ("ABCD".includes(q.a) ? q.a : "A"); }
+    else if (d.v === "text") q.a = null;
+    else if (d.v === "number") { q.a = isNaN(Number(q.a)) ? 0 : Number(q.a); q.tol = q.tol || 0; }
+    else q.a = q.a === "G" ? "G" : "R"; }
   else if (a === "edPts") q.pts = +d.v;
   else if (a === "edAns") q.a = d.v;
   else if (a === "edDel") { if (!confirm("Delete this question?")) return; ED.splice(i, 1); }
   else if (a === "edMove") { const same = ED.map((x, j) => x.r === edRound ? j : -1).filter(j => j >= 0); const pos = same.indexOf(i), to = same[pos + (+d.v)]; if (to == null) return; [ED[i], ED[to]] = [ED[to], ED[i]]; }
   else if (a === "edAdd") {
     const same = ED.map((x, j) => x.r === edRound ? j : -1).filter(j => j >= 0); const at = same.length ? same[same.length - 1] + 1 : ED.length;
-    ED.splice(at, 0, d.v === "mcq" ? { id: "", r: edRound, type: "mcq", a: "A", pts: 2, t: "", opts: ["", "", "", ""], e: "", d: "" } : { id: "", r: edRound, type: "rg", a: "R", pts: 1, t: "", e: "", d: "" });
+    ED.splice(at, 0, d.v === "mcq" ? { id: "", r: edRound, type: "mcq", a: "A", pts: 2, t: "", opts: ["", "", "", ""], e: "", d: "" }
+      : d.v === "poll" ? { id: "", r: edRound, type: "poll", a: null, pts: 1, t: "", opts: ["", "", "", ""], e: "", d: "" }
+      : d.v === "text" ? { id: "", r: edRound, type: "text", a: null, pts: 3, t: "", e: "", d: "" }
+      : d.v === "number" ? { id: "", r: edRound, type: "number", a: 0, tol: 0, unit: "", pts: 2, t: "", e: "", d: "" }
+      : { id: "", r: edRound, type: "rg", a: "R", pts: 1, t: "", e: "", d: "" });
   }
   renderEditor();
   if (a === "edAdd") { const m = $("#qEditor"); const tas = m.querySelectorAll('textarea[data-ef="t"]'); const last = tas[tas.length - 1]; if (last) { last.scrollIntoView({ block: "center" }); last.focus(); } }
@@ -679,10 +964,10 @@ function edAct(a, d) {
 function goSection(k) {
   if (k === "lobby") return host("stage", { stage: { type: "lobby" } });
   if (k.startsWith("rg:")) return host("stage", { stage: { type: "rg", round: k.slice(3), idx: 0, phase: "vote" }, dur: "auto" });
-  if (k === "say") return host("stage", { stage: { type: "say", c: "A", phase: "answer" } });
+  if (k === "say") return host("stage", { stage: { type: "say", c: (V.host.says || ["A"])[0], phase: "answer" } });
   if (k === "box") return host("stage", { stage: { type: "box", phase: "draw" } });
   if (k === "boss") return host("stage", { stage: { type: "boss", phase: "intro" } });
-  if (k === "board") return host("stage", { stage: { type: "board", winner: false } });
+  if (k === "board") return host("stage", { stage: { type: "board", winner: false, mvp: false } });
 }
 async function hostAct(a, d) {
   const s = V && V.stage;
@@ -694,24 +979,40 @@ async function hostAct(a, d) {
     case "timerClose": { const m = $("#timerModal"); m && m.remove(); return; }
     case "timerGo": { const mins = d.m === "custom" ? Number(($("#tmCustom") || {}).value) : Number(d.m); if (!mins || mins < 1) return toast("Write how many minutes"); await host("bigTimer", { dur: Math.round(mins * 60), label: ($("#tmLabel") || {}).value || "" }); const mm = $("#timerModal"); mm && mm.remove(); toast("Timer started"); return; }
     case "timerStopBig": { await host("bigTimer", { dur: 0 }); const ms = $("#timerModal"); ms && ms.remove(); toast("Timer stopped"); return; }
-    case "edClose": if (JSON.stringify([ED, EDC]) !== edOrig && !confirm("Close without saving your changes?")) return; ED = null; EDC = null; { const m = $("#qEditor"); m && m.remove(); } return;
+    case "edClose": if (JSON.stringify([ED, EDC, EDS]) !== edOrig && !confirm("Close without saving your changes?")) return; ED = null; EDC = null; EDS = null; { const m = $("#qEditor"); m && m.remove(); } return;
     case "edSave": {
-      const ok = edTab === "ind" ? await host("quizSave", { quiz: ED }) : await host("contentSave", { content: EDC });
-      if (ok) { toast("Saved ✓ — live for everyone"); ED = clone(V.host.quiz); EDC = clone(V.host.content); edOrig = JSON.stringify([ED, EDC]); renderEditor(); }
+      const ok = edTab === "ind" ? await host("quizSave", { quiz: ED }) : edTab === "group" ? await host("contentSave", { content: EDC }) : await host("setupSave", { setup: EDS });
+      if (ok) { toast("Saved ✓ — live for everyone"); await refresh(); ED = clone(V.host.quiz); EDC = clone(V.host.content); EDS = clone(V.setup); edOrig = JSON.stringify([ED, EDC, EDS]); brandSig = ""; applyBrand(); renderEditor(); }
       return; }
     case "edReset": {
-      if (!confirm("Go back to the original " + (edTab === "ind" ? "questions" : "group games") + " from the session file? Your edits here will be removed.")) return;
-      await host(edTab === "ind" ? "quizReset" : "contentReset");
-      ED = clone(V.host.quiz); EDC = clone(V.host.content); edOrig = JSON.stringify([ED, EDC]); renderEditor(); toast("Original content restored"); return; }
+      const what = edTab === "ind" ? "questions" : edTab === "group" ? "group games" : "session settings";
+      if (!confirm("Go back to the original " + what + " from the session file? Your edits here will be removed.")) return;
+      await host(edTab === "ind" ? "quizReset" : edTab === "group" ? "contentReset" : "setupReset");
+      await refresh(); ED = clone(V.host.quiz); EDC = clone(V.host.content); EDS = clone(V.setup); edOrig = JSON.stringify([ED, EDC, EDS]); brandSig = ""; applyBrand(); renderEditor(); toast("Original content restored"); return; }
+    case "edExport": {
+      const pack = { app: "analytics-arena", version: 1, exported: new Date().toISOString(), setup: EDS, quiz: ED, content: EDC };
+      const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(pack, null, 2)], { type: "application/json" }));
+      a.download = (EDS.name || "session").toLowerCase().replace(/[^a-z0-9]+/g, "-") + ".arena.json"; document.body.appendChild(a); a.click(); a.remove();
+      return toast("Session file downloaded"); }
+    case "edImport": { const f = $("#edFile"); f && f.click(); return; }
+    case "edLogo": { const f = $("#edLogoFile"); f && f.click(); return; }
+    case "edLogoClear": { EDS.logo = ""; return renderEditor(); }
     case "edRound": case "edType": case "edPts": case "edAns": case "edDel": case "edMove": case "edAdd":
     case "edTab": case "edGroup": case "edSet": case "edSetNum": case "edTog": case "edPatAdd": case "edPatDel":
-    case "edDataAdd": case "edDataDel": case "edGMove": case "edGDel": case "edGAdd": return edAct(a, d);
-    case "nextSection": { const i = SECTIONS.findIndex(x => x[0] === curSection()); return goSection(SECTIONS[Math.min(SECTIONS.length - 1, i + 1)][0]); }
+    case "edDataAdd": case "edDataDel": case "edGMove": case "edGDel": case "edGAdd":
+    case "edRAdd": case "edRDel": case "edRMove": case "edSTog": case "edEmojiPreset": return edAct(a, d);
+    case "nextSection": { const S = sections(); const i = S.findIndex(x => x[0] === curSection()); return goSection(S[Math.min(S.length - 1, i + 1)][0]); }
     case "min": dockMin = !dockMin; ls.set("mc-dockmin", dockMin); lastDockSig = ""; return render();
     case "sound": soundOn = !soundOn; sfx("join"); lastDockSig = ""; return render();
     case "timer": return host("timer", { dur: +d.d });
     case "timerAdd": return host("timer", { dur: 30, add: true });
     case "timerStop": return host("timer", { dur: 0 });
+    case "hostLink": {
+      const link = location.origin + "/host?k=" + encodeURIComponent(pin || "");
+      try { await navigator.clipboard.writeText(link); toast("Trainer link copied — bookmark it and you'll never type the PIN again"); }
+      catch (e) { prompt("Copy this link and bookmark it:", link); }
+      return; }
+    case "award": { await host("score", { scores: { ["txt:" + d.q + ":" + d.p]: +d.v } }); return; }
     case "scores": return scoresModal();
     case "closeModal": { const m = $("#scoresModal"); m && m.remove(); return; }
     case "csv": return csv();
@@ -745,12 +1046,14 @@ async function hostAct(a, d) {
     }
     case "boss": return host("stage", { stage: { type: "boss", phase: d.p }, dur: d.d ? +d.d : 0 });
     case "bossQ": return host("stage", { stage: { type: "boss", phase: "reveal", q: Math.max(0, Math.min(6, +d.q)) } });
-    case "winner": return host("stage", { stage: { type: "board", winner: !s.winner } });
+    case "winner": return host("stage", { stage: { type: "board", winner: !s.winner, mvp: !!s.mvp } });
+    case "mvp": return host("stage", { stage: { type: "board", winner: !!s.winner, mvp: !s.mvp } });
   }
 }
 
 /* ---------------- boot ---------------- */
 function render() {
+  applyBrand();
   if (!V) { if (ROLE === "player") renderPlayer(); return; }
   if (ROLE === "player") renderPlayer();
   else if (ROLE === "screen") renderScreen($("#app"));

@@ -88,9 +88,9 @@ textarea.input{min-height:110px;resize:vertical;font-size:17px;unicode-bidi:plai
 .splash .disp{font-size:58px}
 .splash p{margin:10px 0 0;font-size:17px;font-weight:500}
 @keyframes pop{from{transform:scale(.5);opacity:0}}
-.stats3{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-.stats3 > div{background:var(--card);border:2px solid var(--line);border-radius:14px;padding:14px;text-align:center}
-.stats3 b{display:block;font-family:var(--display);font-stretch:75%;font-size:40px;font-weight:900}
+.stats3{display:grid;grid-template-columns:repeat(auto-fit,minmax(95px,1fr));gap:8px}
+.stats3 > div{background:var(--card);border:2px solid var(--line);border-radius:14px;padding:12px 6px;text-align:center}
+.stats3 b{display:block;font-family:var(--display);font-stretch:75%;font-size:32px;font-weight:900;white-space:nowrap}
 .saved{font-size:14px;color:var(--green);font-weight:700}
 .qblock{display:grid;gap:8px;padding:14px 0;border-top:1px solid var(--line)}
 .qblock:first-of-type{border-top:0}
@@ -335,3 +335,69 @@ textarea.input{min-height:110px;resize:vertical;font-size:17px;unicode-bidi:plai
 .btimer.ph .lbl{font-size:15px}
 .btimer.ph .ring.big{width:64px;height:64px}.btimer.ph .ring.big span{font-size:17px}
 .nav.big button{font-size:15px;padding:8px 14px}
+
+/* ---- best players podium (individual winners) ---- */
+.mvp{margin-top:.6em;border-top:2px dashed var(--line2);padding-top:.5em;font-size:.78em}
+.pod3{display:grid;grid-template-columns:repeat(3,1fr);gap:.8em;align-items:end;max-width:46em;margin:0 auto}
+.pod3>div{position:relative;display:flex;flex-direction:column;align-items:center;gap:.08em;background:var(--card);border:2px solid var(--tc,var(--line2));border-radius:1em 1em 0 0;padding:.8em .6em .7em;box-shadow:0 .35em 0 #000;animation:pop .5s cubic-bezier(.2,1.4,.4,1) backwards}
+.pod3 .p1{padding-bottom:1.5em;animation-delay:.45s;border-color:var(--amber);box-shadow:0 .35em 0 #000,0 0 2.2em rgba(255,194,61,.4)}
+.pod3 .p2{padding-bottom:.9em;animation-delay:.15s}
+.pod3 .p3{padding-bottom:.6em;animation-delay:.3s}
+.pod3 .med{font-size:2.1em;line-height:1}
+.pod3 .p1 .med{font-size:2.8em;animation:bob 1.6s ease-in-out infinite}
+.pod3 .av{font-size:1.9em}
+.pod3 .nm{font-family:var(--display);font-stretch:78%;font-weight:900;font-size:1.25em;text-align:center;line-height:1.1}
+.pod3 .pts{font-family:var(--mono);font-size:1.5em;color:var(--sky)}
+.pod3 .p1 .pts{color:var(--amber);font-size:1.9em}
+.pod3 .sub{font-size:.8em;color:var(--muted)}
+.mvprest{display:flex;flex-wrap:wrap;gap:.5em;justify-content:center;margin-top:.9em}
+.mvprest span{background:var(--card);border:1px solid var(--tc,var(--line2));border-radius:.7em;padding:.3em .7em;font-size:.95em}
+.mvprest b{color:var(--sky);font-family:var(--mono);margin-left:.3em}
+@keyframes bob{0%,100%{transform:translateY(0)}50%{transform:translateY(-.14em)}}
+@keyframes pop{from{opacity:0;transform:translateY(1.4em) scale(.85)}to{opacity:1;transform:none}}
+.pcard.gold{border-color:var(--amber);box-shadow:0 6px 0 #000,0 0 30px rgba(255,194,61,.35)}
+
+.board.mini{gap:.4em}
+.board.mini .brow{grid-template-columns:2.2em 11em 1fr 4.5em;gap:.8em}
+.board.mini .rk{font-size:1.4em}.board.mini .nm{font-size:1.2em}
+.board.mini .trk{height:1.1em}.board.mini .tot{font-size:1.6em}
+.mvp{margin-top:.7em;padding-top:.7em}
+
+.winner.compact{margin-top:.4em}
+.winner.compact .wmascot{display:none}
+.winner.compact .w{font-size:1.5em}
+.winner.compact .takeaway{display:none}
+
+/* ---- session setup tab ---- */
+.setupgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:10px}
+.eyebrow.big{font-size:14px;letter-spacing:.06em;color:var(--sky);margin-bottom:6px;display:block}
+.s2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.s3{display:grid;grid-template-columns:repeat(3,1fr);gap:8px}
+.sfield{min-width:0;display:flex;flex-direction:column;gap:2px}
+.sfield .eyebrow{display:block}
+.sfield .hinput{width:100%}.sfield .hcolor{width:72px}
+.hcolor{width:64px;height:38px;padding:0;border:2px solid var(--line2);border-radius:10px;background:var(--card2);cursor:pointer}
+.logoprev{height:38px;width:38px;object-fit:contain;vertical-align:middle;margin-right:8px;background:var(--card2);border-radius:8px;padding:2px}
+.radio.dead{opacity:.35;display:inline-grid;place-items:center}
+@media(max-width:700px){.s2,.s3{grid-template-columns:1fr}}
+
+/* ---- written / number answers ---- */
+.txtans{display:grid;grid-template-columns:repeat(auto-fit,minmax(15em,1fr));gap:.6em;margin-top:.4em}
+.txtans .a{background:var(--card);border:2px solid var(--tc,var(--line2));border-radius:.8em;padding:.6em .8em;animation:slide .4s both}
+.txtans .a.star{border-color:var(--amber);box-shadow:0 0 1.2em rgba(255,194,61,.25)}
+.txtans .who{font-weight:700;color:var(--c);font-size:.95em}
+.txtans p{margin:.25em 0 0;font-size:1.15em;line-height:1.35}
+.txtans .tick{color:var(--amber);font-family:var(--mono)}
+.numans .target{background:var(--card);border:2px solid var(--green);border-radius:.8em;padding:.5em 1em;display:flex;align-items:center;gap:1em;margin-bottom:.6em}
+.numans .target b{font-family:var(--display);font-stretch:75%;font-size:2.6em;font-weight:900;color:var(--green)}
+.numans .alist{display:grid;grid-template-columns:repeat(auto-fit,minmax(16em,1fr));gap:.4em}
+.numans .a{display:flex;align-items:center;gap:.6em;background:var(--card);border:2px solid var(--tc,var(--line2));border-radius:.7em;padding:.4em .7em}
+.numans .a b{margin-left:auto;font-family:var(--mono);font-size:1.3em}
+.numans .a.ok{border-color:var(--green)}
+.numans .a .tick{color:var(--green);font-weight:800}
+.awards{flex-wrap:wrap;gap:6px}
+.award{display:inline-flex;align-items:center;gap:3px;background:var(--card);border:1px solid var(--line2);border-radius:8px;padding:2px 4px 2px 8px}
+.award .nm{font-size:12px;margin-right:4px;max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.award button{width:22px;height:22px;border-radius:6px;background:var(--card2);border:1px solid var(--line2);font-size:11px;font-weight:700}
+.award button.on{background:var(--amber);color:#08131f;border-color:var(--amber)}
+.input.big{font-size:28px;font-weight:800;text-align:center;font-family:var(--mono)}
