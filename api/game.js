@@ -6,7 +6,7 @@ const C = require("../lib/content");
 const store = require("../lib/store");
 
 const P = "mc:";
-const K = { state: P + "state", players: P + "players", rg: P + "rg", rgt: P + "rgt", setup: P + "setup", imgs: P + "imgs", imgv: P + "imgv", auth: P + "auth", devs: P + "devs", files: P + "files", filev: P + "filev", sub: P + "sub", score: P + "score", quiz: P + "quiz", content: P + "content" };
+const K = { state: P + "state", players: P + "players", rg: P + "rg", rgt: P + "rgt", setup: P + "setup", imgs: P + "imgs", imgv: P + "imgv", auth: P + "auth", devs: P + "devs", files: P + "files", filev: P + "filev", ans: P + "ans", ansv: P + "ansv", sub: P + "sub", score: P + "score", quiz: P + "quiz", content: P + "content" };
 const crypto = require("crypto");
 const HOST_PIN = String(process.env.HOST_PIN || "1234");
 // Set HOST_PIN to "none" (or "off") in Vercel and the trainer page opens with no password at all.
@@ -28,13 +28,13 @@ function nums(o) { const r = {}; for (const k in o) r[k] = Number(o[k]) || 0; re
 let cache = null;
 async function load(fresh) {
   if (!fresh && cache && Date.now() - cache.t < 700) { setQuiz(cache.d.quiz || C.RG); setContent(cache.d.content); setSetup(cache.d.setup); return cache.d; }
-  const r = await store.pipeline([["GET", K.state], ["HGETALL", K.players], ["HGETALL", K.rg], ["HGETALL", K.sub], ["HGETALL", K.score], ["GET", K.quiz], ["GET", K.content], ["HGETALL", K.rgt], ["GET", K.setup], ["HGETALL", K.imgv], ["GET", K.auth], ["HGETALL", K.filev]]);
+  const r = await store.pipeline([["GET", K.state], ["HGETALL", K.players], ["HGETALL", K.rg], ["HGETALL", K.sub], ["HGETALL", K.score], ["GET", K.quiz], ["GET", K.content], ["HGETALL", K.rgt], ["GET", K.setup], ["HGETALL", K.imgv], ["GET", K.auth], ["HGETALL", K.filev], ["HGETALL", K.ansv]]);
   let st = defState();
   if (r[0]) { try { st = { ...st, ...JSON.parse(r[0]) }; } catch (e) { } }
   let quiz = null; if (r[5]) { try { quiz = JSON.parse(r[5]); } catch (e) { } }
   let content = null; if (r[6]) { try { content = JSON.parse(r[6]); } catch (e) { } }
   let setup = null; if (r[8]) { try { setup = JSON.parse(r[8]); } catch (e) { } }
-  const d = { st, players: parseJ(toObj(r[1])), rg: toObj(r[2]), rgt: nums(toObj(r[7])), sub: parseJ(toObj(r[3])), score: nums(toObj(r[4])), quiz: Array.isArray(quiz) && quiz.length ? quiz : null, content: content && content.say ? content : null, setup: setup && setup.name ? setup : null, imgv: nums(toObj(r[9])), auth: (() => { try { return r[10] ? JSON.parse(r[10]) : null; } catch (e) { return null; } })(), filev: parseJ(toObj(r[11])) };
+  const d = { st, players: parseJ(toObj(r[1])), rg: toObj(r[2]), rgt: nums(toObj(r[7])), sub: parseJ(toObj(r[3])), score: nums(toObj(r[4])), quiz: Array.isArray(quiz) && quiz.length ? quiz : null, content: content && content.say ? content : null, setup: setup && setup.name ? setup : null, imgv: nums(toObj(r[9])), auth: (() => { try { return r[10] ? JSON.parse(r[10]) : null; } catch (e) { return null; } })(), filev: parseJ(toObj(r[11])), ansv: parseJ(toObj(r[12])) };
   setQuiz(d.quiz || C.RG); setContent(d.content); setSetup(d.setup);
   cache = { t: Date.now(), d };
   return d;
@@ -140,7 +140,7 @@ function sanitizeQuiz(list) {
     else { a = q.a === "G" ? "G" : "R"; }
     let id = String(q.id || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24) || ("q" + Date.now().toString(36) + i);
     while (seen.has(id)) id += "x"; seen.add(id);
-    return { id, r, type, a, team: !!q.team, pts: Math.max(1, Math.min(5, Number(q.pts) || 1)), t, opts, unit: clean(q.unit, 16), tol: Math.max(0, Number(q.tol) || 0), e: clean(q.e, 500), d: clean(q.d, 300) };
+    return { id, r, type, a, team: !!q.team, up: q.type === "text" && !!q.up, pts: Math.max(1, Math.min(5, Number(q.pts) || 1)), t, opts, unit: clean(q.unit, 16), tol: Math.max(0, Number(q.tol) || 0), e: clean(q.e, 500), d: clean(q.d, 300) };
   });
   return out;
 }
@@ -240,17 +240,17 @@ function build(d, { pid, host }) {
       if (!q) cur = { round: stg.round, roundName: R.name, rule: R.rule, level: R.level, kind: R.kind, empty: true, idx: 0, total: 0 };
       else {
       const vv = votesFor(d, q.id);
-      cur = { round: stg.round, roundName: R.name, rule: R.rule, level: R.level, kind: R.kind, idx: stg.idx || 0, total: qs.length, qid: q.id, t: q.t, type: q.type, team: !!q.team, opts: q.opts || null, pts: q.pts || 1, img: d.imgv[q.id] || 0, file: d.filev[q.id] || null, voted: vv.n, of: q.team ? st.teams.length : players.length };
+      cur = { round: stg.round, roundName: R.name, rule: R.rule, level: R.level, kind: R.kind, idx: stg.idx || 0, total: qs.length, qid: q.id, t: q.t, type: q.type, team: !!q.team, up: !!q.up, opts: q.opts || null, pts: q.pts || 1, img: d.imgv[q.id] || 0, file: d.filev[q.id] || null, voted: vv.n, of: q.team ? st.teams.length : players.length };
       if (q.team) cur.submitted = Object.keys(vv.by);
       if (isOpen(q)) { cur.unit = q.unit || ""; cur.tol = q.tol || 0; }
       if (stg.phase === "reveal") {
         Object.assign(cur, { a: q.a, e: q.e, d: q.d, c: vv.c });
         if (q.team) cur.tanswers = st.teams.map(tm => { const sub = d.sub[tkey(q.id, tm.id)]; return { tid: tm.id, name: tm.name, v: sub ? sub.v : null, by: sub ? sub.by : "",
-          ok: sub ? teamRight(q, sub.v) : null, aw: d.score[tkey(q.id, tm.id)] || 0 }; });
+          ok: sub ? teamRight(q, sub.v) : null, aw: d.score[tkey(q.id, tm.id)] || 0, att: d.ansv[q.id + ":" + tm.id] || null }; });
         else if (isOpen(q)) cur.answers = Object.entries(vv.by).map(([id, val]) => ({ id, name: d.players[id].name, emoji: d.players[id].emoji, team: d.players[id].team, v: val,
           ok: q.type === "number" ? numOK(q, val) : ((d.score || {})["txt:" + q.id + ":" + id] || 0) > 0,
           aw: (d.score || {})["txt:" + q.id + ":" + id] || 0,
-          off: q.type === "number" ? Math.abs(Number(val) - Number(q.a)) : 0 })).sort((x, y) => q.type === "number" ? x.off - y.off : y.aw - x.aw);
+          off: q.type === "number" ? Math.abs(Number(val) - Number(q.a)) : 0, att: d.ansv[q.id + ":" + id] || null })).sort((x, y) => q.type === "number" ? x.off - y.off : y.aw - x.aw);
       }
       if (stg.mic && d.players[stg.mic]) cur.mic = { name: d.players[stg.mic].name, emoji: d.players[stg.mic].emoji };
       if (host) cur.notVoted = players.filter(p => !vv.by[p.id]).map(p => p.id);
@@ -294,10 +294,10 @@ function build(d, { pid, host }) {
       rank: 1 + Object.values(rs).filter(x => x.arena > mine.arena).length, of: Object.keys(d.players).length };
     if (stg.type === "rg" && cur && cur.qid && Q[cur.qid] && Q[cur.qid].team) {
       const sub = d.sub[tkey(cur.qid, p.team)];
-      me.teamAns = sub || null; me.vote = sub ? sub.v : null;
+      me.teamAns = sub || null; me.vote = sub ? sub.v : null; me.att = d.ansv[cur.qid + ":" + p.team] || null;
       if (stg.phase === "reveal") { const q = Q[cur.qid]; me.right = sub ? (q.type === "text" ? (d.score[tkey(q.id, p.team)] || 0) > 0 : teamRight(q, sub.v)) : false; me.gain = me.right ? (q.type === "text" ? (d.score[tkey(q.id, p.team)] || 0) : (q.pts || 1)) : 0; }
     }
-    else if (stg.type === "rg" && cur && cur.qid) { me.vote = d.rg[cur.qid + ":" + pid] || null; if (stg.phase === "reveal") { const qq = Q[cur.qid]; me.right = qq.type === "number" ? (me.vote != null && me.vote !== "" && numOK(qq, me.vote)) : qq.type === "text" ? ((d.score || {})["txt:" + cur.qid + ":" + pid] || 0) > 0 : (!!cur.a && me.vote === cur.a); if (me.right) { const p = Q[cur.qid].pts || 1; me.gain = p * base() + Math.round(p * base() * speedMax() * Math.max(0, Math.min(1, (d.rgt || {})[cur.qid + ":" + pid] ?? 0))); } } }
+    else if (stg.type === "rg" && cur && cur.qid) { me.vote = d.rg[cur.qid + ":" + pid] || null; me.att = d.ansv[cur.qid + ":" + pid] || null; if (stg.phase === "reveal") { const qq = Q[cur.qid]; me.right = qq.type === "number" ? (me.vote != null && me.vote !== "" && numOK(qq, me.vote)) : qq.type === "text" ? ((d.score || {})["txt:" + cur.qid + ":" + pid] || 0) > 0 : (!!cur.a && me.vote === cur.a); if (me.right) { const p = Q[cur.qid].pts || 1; me.gain = p * base() + Math.round(p * base() * speedMax() * Math.max(0, Math.min(1, (d.rgt || {})[cur.qid + ":" + pid] ?? 0))); } } }
     if (stg.type === "say") me.teamSub = d.sub["say:" + cur.id + ":" + p.team] || null;
     if (stg.type === "box") { me.box = st.boxAssign[p.team] || null; me.teamSub = d.sub["box:" + p.team] || null; }
     if (stg.type === "boss") { me.teamSub = d.sub["boss:" + p.team] || null; me.note = d.sub["note:" + pid] || null; }
@@ -380,6 +380,18 @@ module.exports = async function handler(req, res) {
         await store.cmd("DEL", K.auth, K.devs); cache = null;
         return send(res, 200, { ok: true, message: "Authenticator removed. Sign in with the PIN, then delete HOST_RESET in Vercel." });
       }
+      const ansQ = url.searchParams.get("ans");
+      if (ansQ) {
+        const raw = await store.cmd("HGET", K.ans, String(ansQ));
+        if (!raw) { res.statusCode = 404; return res.end(); }
+        let x; try { x = JSON.parse(raw); } catch (e) { res.statusCode = 404; return res.end(); }
+        const buf = Buffer.from(x.d, "base64");
+        res.statusCode = 200;
+        res.setHeader("Content-Type", x.t || "application/octet-stream");
+        res.setHeader("Content-Disposition", 'inline; filename="' + String(x.n || "answer").replace(/[^\w. -]/g, "_") + '"');
+        res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+        return res.end(buf);
+      }
       const fileQ = url.searchParams.get("file");
       if (fileQ) {
         const raw = await store.cmd("HGET", K.files, String(fileQ));
@@ -438,6 +450,19 @@ module.exports = async function handler(req, res) {
       else if (!choices(q).includes(b.v)) return send(res, 409, { ok: false, message: "That statement is over." });
       let frac = 0;
       if (stg.endsAt && stg.startsAt && stg.endsAt > stg.startsAt) frac = Math.max(0, Math.min(1, (stg.endsAt - now) / (stg.endsAt - stg.startsAt)));
+      // an optional photo/file sent with a written answer
+      let att = null;
+      if (q.type === "text" && q.up && b.file && b.file.data) {
+        const m = /^data:([^;,]*);base64,([A-Za-z0-9+/=]+)$/.exec(String(b.file.data));
+        if (!m) return send(res, 400, { ok: false, message: "That file didn't work." });
+        if (m[2].length > 2800000) return send(res, 400, { ok: false, message: "That file is too big — keep it under 2 MB." });
+        att = { t: /^[\w.+-]+\/[\w.+-]+$/.test(m[1]) ? m[1] : "application/octet-stream", n: clean(b.file.name, 80) || "answer", d: m[2] };
+      }
+      const who = q.team ? (d.players[b.pid] || {}).team : b.pid;
+      const akey = q.id + ":" + who;
+      if (att) await store.pipeline([["HSET", K.ans, akey, JSON.stringify(att)],
+        ["HSET", K.ansv, akey, JSON.stringify({ v: ((d.ansv[akey] || {}).v || 0) + 1, n: att.n, t: att.t, size: Math.round(att.d.length * 0.75) })]]);
+      if (b.file === null) await store.pipeline([["HDEL", K.ans, akey], ["HDEL", K.ansv, akey]]);
       if (q.team) {
         const p = d.players[b.pid];
         await store.cmd("HSET", K.sub, tkey(q.id, p.team), JSON.stringify({ v: b.v, by: p.name, frac })); cache = null;
@@ -599,8 +624,8 @@ module.exports = async function handler(req, res) {
       }
       else if (op === "kick") { await store.cmd("HDEL", K.players, b.pid); cache = null; }
       else if (op === "reset") {
-        if (b.all) await store.cmd("DEL", K.state, K.players, K.rg, K.rgt, K.sub, K.score);
-        else { await store.cmd("DEL", K.rg, K.rgt, K.sub, K.score); st.revealed = {}; st.boxAssign = {}; st.stage = { type: "lobby" }; await saveState(st); }
+        if (b.all) await store.cmd("DEL", K.state, K.players, K.rg, K.rgt, K.sub, K.score, K.ans, K.ansv);
+        else { await store.cmd("DEL", K.rg, K.rgt, K.sub, K.score, K.ans, K.ansv); st.revealed = {}; st.boxAssign = {}; st.stage = { type: "lobby" }; await saveState(st); }
         cache = null;
       } else return send(res, 400, { ok: false });
       return send(res, 200, { ok: true });
