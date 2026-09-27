@@ -140,7 +140,7 @@ function sanitizeQuiz(list) {
     else { a = q.a === "G" ? "G" : "R"; }
     let id = String(q.id || "").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 24) || ("q" + Date.now().toString(36) + i);
     while (seen.has(id)) id += "x"; seen.add(id);
-    return { id, r, type, a, team: !!q.team, up: q.type === "text" && !!q.up, pts: Math.max(1, Math.min(5, Number(q.pts) || 1)), t, opts, unit: clean(q.unit, 16), tol: Math.max(0, Number(q.tol) || 0), e: clean(q.e, 500), d: clean(q.d, 300) };
+    return { id, r, type, a, topic: clean(q.topic, 60), team: !!q.team, up: q.type === "text" && !!q.up, pts: Math.max(1, Math.min(5, Number(q.pts) || 1)), t, opts, unit: clean(q.unit, 16), tol: Math.max(0, Number(q.tol) || 0), e: clean(q.e, 500), d: clean(q.d, 300) };
   });
   return out;
 }
@@ -240,7 +240,7 @@ function build(d, { pid, host }) {
       if (!q) cur = { round: stg.round, roundName: R.name, rule: R.rule, level: R.level, kind: R.kind, empty: true, idx: 0, total: 0 };
       else {
       const vv = votesFor(d, q.id);
-      cur = { round: stg.round, roundName: R.name, rule: R.rule, level: R.level, kind: R.kind, idx: stg.idx || 0, total: qs.length, qid: q.id, t: q.t, type: q.type, team: !!q.team, up: !!q.up, opts: q.opts || null, pts: q.pts || 1, img: d.imgv[q.id] || 0, file: d.filev[q.id] || null, voted: vv.n, of: q.team ? st.teams.length : players.length };
+      cur = { round: stg.round, roundName: R.name, rule: R.rule, level: R.level, kind: R.kind, idx: stg.idx || 0, total: qs.length, qid: q.id, t: q.t, type: q.type, topic: q.topic || '', team: !!q.team, up: !!q.up, opts: q.opts || null, pts: q.pts || 1, img: d.imgv[q.id] || 0, file: d.filev[q.id] || null, voted: vv.n, of: q.team ? st.teams.length : players.length };
       if (q.team) cur.submitted = Object.keys(vv.by);
       if (isOpen(q)) { cur.unit = q.unit || ""; cur.tol = q.tol || 0; }
       if (stg.phase === "reveal") {
