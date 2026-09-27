@@ -189,6 +189,134 @@ function typing() { const a = document.activeElement; return a && /INPUT|TEXTARE
 
 const nfmt = n => (n || 0).toLocaleString("en-US");
 
+
+/* ---- handout: a printable sheet of the questions (Print → Save as PDF) ---- */
+let hoOpts = ls.get("mc-handout", { answers: true, why: true, images: true, discuss: false });
+let hoSel = null;                       // which questions go in the sheet (null = all of them)
+const hoIds = () => (V.host.quiz || []).map(q => q.id);
+function hoEnsure() { if (!hoSel) hoSel = new Set(hoIds()); else hoIds().forEach(id => { }); }
+const hoHas = id => !hoSel || hoSel.has(id);
+function handoutModal() {
+  hoEnsure();
+  let m = $("#hoModal");
+  if (!m) { m = document.createElement("div"); m.className = "modal"; m.id = "hoModal"; document.body.appendChild(m); }
+  const row = (k, label, note) => `<label class="hocheck"><input type="checkbox" data-ho="${k}" ${hoOpts[k] ? "checked" : ""}><span><b>${label}</b><br><span class="muted small">${note}</span></span></label>`;
+  const H = V.host, R = H.rounds, order = V.order || Object.keys(R);
+  const short = t => { t = String(t || ""); return t.length > 68 ? t.slice(0, 68) + "…" : t; };
+  let n = 0;
+  const tree = order.map(key => {
+    const r = R[key]; if (!r) return "";
+    const qs = H.quiz.filter(q => q.r === key); if (!qs.length) return "";
+    const allIn = qs.every(q => hoHas(q.id));
+    const groups = [];
+    qs.forEach(q => {
+      const t = q.topic || "";
+      const g = groups.find(x => x.t === t);
+      (g || (groups[groups.push({ t, qs: [] }) - 1])).qs.push(q);
+    });
+    const body = groups.map(g => {
+      const gIn = g.qs.every(q => hoHas(q.id));
+      const head = g.t ? `<div class="hotopic"><label><input type="checkbox" data-hog="${esc(key)}||${esc(g.t)}" ${gIn ? "checked" : ""}><b>🏷 ${esc(g.t)}</b></label></div>` : "";
+      const list = g.qs.map(q => {
+        n++;
+        return `<label class="hoq"><input type="checkbox" data-hoq="${esc(q.id)}" ${hoHas(q.id) ? "checked" : ""}>
+          <span class="num">${n}</span><span class="tx">${esc(short(q.t)) || "<i>(empty)</i>"}</span>
+          <span class="tag">${q.type === "rg" ? "2 buttons" : q.type === "mcq" ? "ABCD" : q.type === "poll" ? "poll" : q.type === "text" ? "written" : "number"}${q.team ? " · team" : ""}</span></label>`;
+      }).join("");
+      return head + list;
+    }).join("");
+    return `<div class="horound"><div class="hohead"><label><input type="checkbox" data-hor="${esc(key)}" ${allIn ? "checked" : ""}><b>${esc(r.name)}</b></label><span class="muted small">${qs.length} questions</span></div>${body}</div>`;
+  }).join("");
+  const total = hoIds().length, picked = hoIds().filter(hoHas).length;
+  m.innerHTML = `<div class="in" style="max-width:760px"><div class="row"><h2 class="disp sh2" style="margin:0;font-size:30px">📄 Handout</h2><div class="spacer"></div><button class="btn sm primary" data-act="hoClose">Close</button></div>
+    <p class="muted">Pick the questions, choose what shows, then open the sheet and use your browser's Print → <b>Save as PDF</b>.</p>
+    <div class="row" style="margin:10px 0 6px"><b>Questions</b><span class="chip">${picked} of ${total} picked</span><div class="spacer"></div>
+      <button class="btn sm ghost" data-act="hoAll">Select all</button><button class="btn sm ghost" data-act="hoNone">Clear</button></div>
+    <div class="hotree">${tree || `<p class="muted">No questions yet.</p>`}</div>
+    <div class="hoopts" style="margin-top:14px">
+      ${row("answers", "The right answers", "Leave it off for a worksheet to hand out before the session")}
+      ${row("why", "The explanation under each answer", "The “Why” you wrote in the editor")}
+      ${row("images", "Pictures", "Charts and screenshots attached to questions")}
+      ${row("discuss", "Discussion prompts", "The optional question you added for the debrief")}
+    </div>
+    <div class="row" style="margin-top:14px"><button class="btn red cta" data-act="hoOpen" ${picked ? "" : "disabled"}>📄 Open the sheet${picked && picked < total ? ` (${picked} questions)` : ""}</button></div></div>`;
+  const box = $(".hotree"); if (box) box.scrollTop = hoScroll;
+}
+let hoScroll = 0;
+function handoutHTML() {
+  const S = SETUP(), H = V.host, R = H.rounds, order = V.order || Object.keys(R);
+  const o = hoOpts;
+  const today = new Date().toLocaleDateString();
+  const esc2 = t => esc(t || "");
+  const typeName = q => q.type === "rg" ? flagOf("R").label + " / " + flagOf("G").label : q.type === "mcq" ? "Multiple choice" : q.type === "poll" ? "Poll" : q.type === "text" ? "Written answer" : "Number";
+  let n = 0;
+  const blocks = order.map(key => {
+    const r = R[key]; if (!r) return "";
+    const qs = H.quiz.filter(q => q.r === key && hoHas(q.id)); if (!qs.length) return "";
+    let lastTopic = null;
+    const items = qs.map(q => {
+      n++;
+      const head = q.topic && q.topic !== lastTopic ? `<h3 class="topic">${esc2(q.topic)}</h3>` : "";
+      lastTopic = q.topic || lastTopic;
+      const opts = (q.opts || []).filter(Boolean).map((t, i) => {
+        const L = "ABCD"[i], right = o.answers && q.a === L;
+        return `<li class="${right ? "right" : ""}">${right ? "✔ " : ""}<b>${L})</b> ${esc2(t)}</li>`;
+      }).join("");
+      let answer = "";
+      if (o.answers) {
+        if (q.type === "rg") answer = `<p class="ans">Answer: <b>${esc2(flagOf(q.a).label)}</b></p>`;
+        else if (q.type === "number") answer = `<p class="ans">Answer: <b>${esc2(q.a)}${q.unit ? " " + esc2(q.unit) : ""}</b>${q.tol ? ` (anything within ±${q.tol} counts)` : ""}</p>`;
+        else if (q.type === "mcq") answer = `<p class="ans">Answer: <b>${esc2(q.a)}</b></p>`;
+      }
+      return `${head}<div class="q">
+        <div class="qh"><span class="num">${n}</span><span class="badge">${esc2(typeName(q))}${q.team ? " · team" : ""}</span>${q.pts > 1 ? `<span class="badge pts">${q.pts} points</span>` : ""}</div>
+        <p class="qt">${esc2(q.t)}</p>
+        ${o.images && q.img ? `<img class="qpic" src="/api/game?img=${encodeURIComponent(q.id)}&v=${q.img}" alt="">` : ""}
+        ${q.file ? `<p class="att">📎 ${esc2(q.file.n)}</p>` : ""}
+        ${q.type === "rg" && !o.answers ? `<ul class="opts"><li>${esc2(flagOf("R").label)}</li><li>${esc2(flagOf("G").label)}</li></ul>` : ""}
+        ${opts ? `<ul class="opts">${opts}</ul>` : ""}
+        ${q.type === "text" ? `<div class="writein">${o.answers ? "" : "&nbsp;"}</div>` : ""}
+        ${answer}
+        ${o.why && q.e ? `<p class="why"><b>Why:</b> ${esc2(q.e)}</p>` : ""}
+        ${o.discuss && q.d ? `<p class="disc"><b>Discuss:</b> ${esc2(q.d)}</p>` : ""}
+      </div>`;
+    }).join("");
+    return `<section class="round"><h2>${esc2(r.name)}</h2>${r.level || r.rule ? `<p class="sub">${esc2([r.level, r.rule].filter(Boolean).join(" · "))}</p>` : ""}${items}${r.takeaway ? `<p class="take"><b>Takeaway:</b> ${esc2(r.takeaway)}</p>` : ""}</section>`;
+  }).join("");
+  const css = `*{box-sizing:border-box}body{font-family:-apple-system,Segoe UI,Roboto,"Helvetica Neue",Arial,sans-serif;color:#10222f;background:#f4f7fa;margin:0;padding:28px;line-height:1.5}
+  .sheet{max-width:820px;margin:0 auto;background:#fff;padding:38px 42px;border-radius:14px;box-shadow:0 2px 20px rgba(16,34,47,.1)}
+  header{display:flex;align-items:center;gap:14px;border-bottom:3px solid #1A9FEF;padding-bottom:14px;margin-bottom:8px}
+  header img{height:46px} header h1{font-size:26px;margin:0;letter-spacing:-.01em} header .meta{margin-left:auto;color:#5b7186;font-size:13px;text-align:right}
+  .lead{color:#5b7186;font-size:14px;margin:10px 0 22px}
+  section.round{margin-top:26px;page-break-inside:auto}
+  section.round h2{font-size:20px;margin:0 0 2px;color:#0d5c92;border-left:5px solid #1A9FEF;padding-left:10px}
+  section.round .sub{margin:0 0 12px 15px;color:#5b7186;font-size:13px}
+  h3.topic{font-size:14px;text-transform:uppercase;letter-spacing:.08em;color:#1A9FEF;margin:20px 0 6px;border-bottom:1px dashed #cfe0ec;padding-bottom:4px}
+  .q{border:1px solid #e1e9f0;border-radius:10px;padding:14px 16px;margin:10px 0;page-break-inside:avoid;background:#fff}
+  .qh{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+  .num{background:#1A9FEF;color:#fff;font-weight:700;width:26px;height:26px;border-radius:50%;display:grid;place-items:center;font-size:13px}
+  .badge{background:#eef5fa;color:#43637c;font-size:11px;padding:2px 8px;border-radius:20px;text-transform:uppercase;letter-spacing:.05em}
+  .badge.pts{background:#fff3d6;color:#8a6200}
+  .qt{font-size:17px;font-weight:600;margin:4px 0 8px}
+  .qpic{max-width:100%;max-height:260px;border:1px solid #e1e9f0;border-radius:8px;display:block;margin:8px 0}
+  .att{font-size:13px;color:#5b7186;margin:4px 0}
+  ul.opts{margin:6px 0;padding-left:20px} ul.opts li{margin:2px 0}
+  ul.opts li.right{background:#e7f7ec;border-radius:6px;padding:2px 6px;font-weight:600;list-style:none;margin-left:-20px;padding-left:20px}
+  .writein{border-bottom:1px solid #cfd9e2;height:26px;margin:10px 0 4px}
+  .ans{margin:8px 0 2px;color:#0a7b3e;font-size:15px}
+  .why{margin:4px 0;font-size:14px;color:#33475b;background:#f7fafc;border-left:3px solid #1A9FEF;padding:8px 10px;border-radius:0 6px 6px 0}
+  .disc{margin:4px 0;font-size:14px;color:#6b4b00;background:#fffaf0;border-left:3px solid #FFC23D;padding:8px 10px;border-radius:0 6px 6px 0}
+  .take{margin:12px 0 0 15px;font-size:14px;color:#0d5c92}
+  .bar{position:sticky;top:0;background:#10222f;color:#fff;padding:10px 14px;border-radius:10px;display:flex;gap:10px;align-items:center;max-width:820px;margin:0 auto 16px}
+  .bar button{background:#1A9FEF;color:#fff;border:0;border-radius:8px;padding:9px 16px;font-weight:700;font-size:14px;cursor:pointer}
+  .bar span{font-size:13px;opacity:.85}
+  @media print{body{background:#fff;padding:0}.bar{display:none}.sheet{box-shadow:none;max-width:none;padding:0;border-radius:0}}`;
+  return `<!doctype html><html lang="en"><head><meta charset="utf-8"><title>${esc2(S.name)} — questions</title><style>${css}</style></head><body>
+    <div class="bar"><button onclick="window.print()">🖨 Print / Save as PDF</button><span>In the print window choose <b>Destination: Save as PDF</b>.</span></div>
+    <div class="sheet"><header><img src="${logoSrc()}" alt="" onerror="this.remove()"><h1>${esc2(S.name)}</h1><div class="meta">${esc2(S.tagline)}<br>${today}</div></header>
+    <p class="lead">${(hoSel && hoSel.size < hoIds().length ? "Selected questions" : "Every question") + " from the session" + (o.answers ? ", with the answers and the reasoning." : " — answers not included.")}</p>
+    ${blocks || "<p>No questions yet.</p>"}</div></body></html>`;
+}
 /* ---- session setup (name, logo, colours, rounds) ---- */
 const SETUP = () => (V && V.setup) || { name: "Arena", tagline: "", accent: "#1A9FEF", logo: "", emojis: EMOJIS, flag: { R: { label: "Red flag", emoji: "\u{1F6A9}" }, G: { label: "Green flag", emoji: "\u2705" } }, games: { say: 1, box: 1, boss: 1 }, rounds: [], scoring: { base: 100, speed: 50, poll: 0 }, timers: { rg: 20, mcq: 30, mcqLong: 40, text: 60 }, limits: { text: 1000 } };
 const textMax = () => ((SETUP().limits || {}).text) || 1000;
@@ -319,7 +447,7 @@ function renderPlayer() {
           <button class="vote r ${onoff("R")}" data-act="vote" data-v="R" ${closed ? "disabled" : ""}>${flagOf("R").emoji} ${esc(flagOf("R").label)}</button>
           <button class="vote g ${onoff("G")}" data-act="vote" data-v="G" ${closed ? "disabled" : ""}>${flagOf("G").emoji} ${esc(flagOf("G").label)}</button>
         </div>`;
-      body = `<div class="eyebrow">${esc(cur.roundName)} · ${cur.idx + 1}/${cur.total}${cur.pts > 1 ? " · " + ptsTxt(cur.pts) : ""}</div>
+      body = `<div class="eyebrow">${esc(cur.roundName)}${cur.topic ? " · " + esc(cur.topic) : ""} · ${cur.idx + 1}/${cur.total}${cur.pts > 1 ? " · " + ptsTxt(cur.pts) : ""}</div>
         ${teamBar}<p class="pstatement">${esc(cur.t)}</p>${qImg(cur, "ph")}${qFile(cur)}${tbar(stg)}
         ${btns}
         ${open ? "" : `<p class="lock">${closed ? "⏰ Time's up" : isTeam ? (me.vote ? "Anyone in the team can still change it" : "Tap the answer for your team") : me.vote ? "🔒 Locked in — tap the other one to change" : "Tap your answer"}</p>`}`;
@@ -527,7 +655,7 @@ function screenHTML() {
     const choicesHTML = isTeamQ ? teamAnsHTML() : openQ ? openHTML() : c.type !== "rg"
       ? `<div class="sopts">${c.opts.map((o, i) => { const k = "ABCD"[i]; return `<div class="sopt o${k} ${rev && c.a ? (c.a === k ? "win" : "lose") : ""}"><span class="sh">${SHAPES[k]}</span><span class="tx">${esc(o)}</span>${rev ? `<span class="pc">${pct(k)}%</span>` : ""}</div>`; }).join("")}</div>`
       : `<div class="flags">${["R", "G"].map(k => `<div class="flag ${k.toLowerCase()} ${rev && c.a ? (c.a === k ? "win" : "lose") : ""}"><div style="flex:1"><div class="disp">${flagOf(k).emoji} ${esc(flagOf(k).label)}</div>${rev ? `<div class="vbar"><i style="width:${pct(k)}%"></i></div>` : ""}</div>${rev ? `<div class="pct">${pct(k)}%</div>` : ""}</div>`).join("")}</div>`;
-    h = `<div class="row"><div class="eyebrow">${esc(c.roundName)} · ${esc(c.level)} · ${c.idx + 1}/${c.total}${c.team ? " · 👥 team answer" : ""}${c.pts > 1 ? " · " + ptsTxt(c.pts) : ""}</div><div class="spacer"></div>${c.mic && rev ? `<div class="mic">🎤 ${esc(c.mic.emoji)} ${esc(c.mic.name)}</div>` : ""}</div>
+    h = `<div class="row"><div class="eyebrow">${esc(c.roundName)}${c.topic ? " · " + esc(c.topic) : " · " + esc(c.level)} · ${c.idx + 1}/${c.total}${c.team ? " · 👥 team answer" : ""}${c.pts > 1 ? " · " + ptsTxt(c.pts) : ""}</div><div class="spacer"></div>${c.mic && rev ? `<div class="mic">🎤 ${esc(c.mic.emoji)} ${esc(c.mic.name)}</div>` : ""}</div>
       <p class="big-statement ${c.type !== "rg" ? "q" : ""} ${c.img ? "withimg" : ""}">${esc(c.t)}</p>
       ${qImg(c, "sc")}${c.file ? `<div class="filenote">📎 <b>${esc(c.file.n)}</b> — open it from your phone</div>` : ""}
       ${(openQ || isTeamQ) && !rev ? `<div class="meta">${ring(s, true)}<div><div class="voted mono">${c.voted}/${c.of}</div><div class="eyebrow">${isTeamQ ? "teams in" : "answered"}</div></div></div>` : ""}
@@ -685,7 +813,7 @@ function dockHTML() {
   const navBtns = navGroups().map(([g, items]) => `<div class="navg ${g ? "lab" : ""}">${g ? `<span class="gl">${g}</span>` : ""}${items.map(([k, l]) => `<button class="${curSection() === k ? "on" : ""}" data-act="go" data-k="${k}">${l}</button>`).join("")}</div>`).join("");
   const nav = `<div class="dock-top"><span class="lbl">Trainer</span><div class="nav">${navBtns}</div><div class="spacer"></div>
     <button class="btn sm" data-act="timerAdd">+30s</button><button class="btn sm" data-act="timerStop">Stop timer</button><button class="btn sm" data-act="scores">🔒 Private scores</button><button class="btn sm" data-act="edOpen">✏️ Content</button><button class="btn sm ${V.timer ? "amber" : ""}" data-act="timerOpen">⏱ Big timer</button>
-    <button class="btn sm" data-act="security" title="Authenticator app and signed-in devices">🔐 Security</button><button class="btn sm" data-act="hostLink" title="Copy a link that opens this page with no password">🔗 My link</button><button class="btn sm ${soundOn ? "amber" : ""}" data-act="sound">${soundOn ? "🔊" : "🔇"}</button><button class="btn sm" data-act="min" title="P">${dockMin ? "▲ Show" : "▼ Hide"} <span class="kbd">P</span></button></div>`;
+    <button class="btn sm" data-act="handout" title="A printable sheet of all the questions">📄 Handout</button><button class="btn sm" data-act="security" title="Authenticator app and signed-in devices">🔐 Security</button><button class="btn sm" data-act="hostLink" title="Copy a link that opens this page with no password">🔗 My link</button><button class="btn sm ${soundOn ? "amber" : ""}" data-act="sound">${soundOn ? "🔊" : "🔇"}</button><button class="btn sm" data-act="min" title="P">${dockMin ? "▲ Show" : "▼ Hide"} <span class="kbd">P</span></button></div>`;
   let b = "";
   if (s.type === "lobby") {
     b = `<div class="ctx"><span class="info">Players join at <b>${esc(location.origin)}</b> · ${V.players.length} joined</span></div>
@@ -968,6 +1096,8 @@ function renderEditor() {
       <button class="btn sm ghost" data-act="edMove" data-i="${i}" data-v="-1" ${n === 0 ? "disabled" : ""} title="Move up">↑</button>
       <button class="btn sm ghost" data-act="edMove" data-i="${i}" data-v="1" ${n === items.length - 1 ? "disabled" : ""} title="Move down">↓</button>
       <button class="btn sm ghost" data-act="edDel" data-i="${i}" title="Delete">🗑</button></div>
+    <div class="s2"><div class="sfield"><label class="eyebrow">Topic — the part of the session this belongs to (optional)</label>
+      <input class="hinput" data-ef="topic" data-i="${i}" value="${esc(q.topic || "")}" placeholder="e.g. Reach vs Impressions" dir="auto"></div><div></div></div>
     <label class="eyebrow">Statement / question</label>
     <textarea class="hinput" rows="2" data-ef="t" data-i="${i}" dir="auto">${esc(q.t)}</textarea>
     ${q.type === "mcq" || q.type === "poll"
@@ -1035,6 +1165,16 @@ document.addEventListener("input", e => {
 let imgFor = null;
 document.addEventListener("change", e => {
   const el = e.target;
+  if (el.dataset && el.dataset.ho) { hoOpts[el.dataset.ho] = el.checked; ls.set("mc-handout", hoOpts); return; }
+  if (el.dataset && (el.dataset.hoq || el.dataset.hor || el.dataset.hog)) {
+    hoEnsure();
+    const box = $(".hotree"); hoScroll = box ? box.scrollTop : 0;
+    const pick = (ids, on) => ids.forEach(id => on ? hoSel.add(id) : hoSel.delete(id));
+    if (el.dataset.hoq) pick([el.dataset.hoq], el.checked);
+    else if (el.dataset.hor) pick(V.host.quiz.filter(q => q.r === el.dataset.hor).map(q => q.id), el.checked);
+    else { const [r, t] = el.dataset.hog.split("||"); pick(V.host.quiz.filter(q => q.r === r && (q.topic || "") === t).map(q => q.id), el.checked); }
+    return handoutModal();
+  }
   if (el.id === "f-up" && el.files && el.files[0]) {
     const file = el.files[0]; el.value = "";
     if (file.size > 12e6) return toast("That file is too big");
@@ -1270,6 +1410,16 @@ async function hostAct(a, d) {
       return; }
     case "award": { await host("score", { scores: { ["txt:" + d.q + ":" + d.p]: +d.v } }); return; }
     case "awardT": { await host("score", { scores: { ["tq:" + d.q + ":" + d.t]: +d.v } }); return; }
+    case "handout": return handoutModal();
+    case "hoClose": { const m = $("#hoModal"); m && m.remove(); return; }
+    case "hoAll": { hoSel = new Set(hoIds()); return handoutModal(); }
+    case "hoNone": { hoSel = new Set(); return handoutModal(); }
+    case "hoOpen": {
+      const w = window.open("", "_blank");
+      if (!w) return toast("Your browser blocked the new window — allow pop-ups and try again");
+      w.document.write(handoutHTML()); w.document.close();
+      const m = $("#hoModal"); m && m.remove();
+      return; }
     case "security": return secOpen();
     case "secClose": { const m = $("#secModal"); m && m.remove(); return; }
     case "secStart": { try { const r = await api("POST", { a: "host", pin, tok, op: "authSetup" }); return secModal(r); } catch (e) { return toast(e.message); } }

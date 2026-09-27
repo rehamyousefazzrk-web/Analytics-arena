@@ -470,3 +470,22 @@ textarea.input{min-height:110px;resize:vertical;font-size:17px;unicode-bidi:plai
 .filebtn.sm .ic{font-size:16px}
 .attimg{display:block;margin-top:.4em}
 .attimg img{max-width:100%;max-height:9em;border-radius:.5em;border:1px solid var(--line2);background:#fff;display:block}
+
+/* ---- handout options ---- */
+.hoopts{display:grid;gap:8px;margin-top:12px}
+.hocheck{display:flex;gap:10px;align-items:flex-start;background:var(--card2);border:1px solid var(--line2);border-radius:10px;padding:10px 12px;cursor:pointer}
+.hocheck input{margin-top:3px;width:18px;height:18px;accent-color:var(--brand)}
+
+/* ---- handout question picker ---- */
+.hotree{max-height:42vh;overflow:auto;border:1px solid var(--line2);border-radius:12px;padding:8px;background:var(--card2)}
+.horound{margin-bottom:10px}
+.hohead{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--line2);border-radius:8px;padding:6px 10px;position:sticky;top:0;z-index:1}
+.hohead label,.hotopic label,.hoq{display:flex;align-items:center;gap:8px;cursor:pointer}
+.hohead .spacer{flex:1}
+.hotopic{margin:8px 0 2px 16px;font-size:13px;color:var(--sky)}
+.hoq{margin:2px 0 2px 28px;padding:3px 6px;border-radius:6px}
+.hoq:hover{background:var(--card)}
+.hoq .num{font-family:var(--mono);font-size:11px;color:var(--muted);width:22px}
+.hoq .tx{flex:1;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.hoq .tag{font-size:10px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);background:var(--card);border:1px solid var(--line2);border-radius:20px;padding:1px 7px;white-space:nowrap}
+.hotree input[type=checkbox]{width:16px;height:16px;accent-color:var(--brand)}
